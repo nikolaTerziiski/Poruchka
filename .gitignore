@@ -28,3 +28,7 @@ npm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# tooling artifacts
+.playwright-mcp/
+next-env.d.ts
