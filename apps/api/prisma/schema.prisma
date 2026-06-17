@@ -1,0 +1,169 @@
+// Poruchka data model — multi-tenant from day one.
+// RLS policies are added in a separate SQL migration (see prisma/migrations).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  OWNER
+  MANAGER
+  STAFF
+}
+
+enum ChatChannel {
+  TELEGRAM
+  VIBER
+  WHATSAPP
+}
+
+enum ReminderStatus {
+  PENDING
+  CONFIRMED
+  ESCALATED
+  CANCELLED
+}
+
+/// A restaurant. Top-level tenant; everything else is scoped to it.
+model Tenant {
+  id                 String   @id @default(uuid()) @db.Uuid
+  name               String
+  timezone           String   @default("Europe/Sofia")
+  quietHoursStart    Int      @default(22) // local hour 0-23 — no nudges from here…
+  quietHoursEnd      Int      @default(8) // …until here
+  renudgeIntervalMin Int      @default(60)
+  maxNudges          Int      @default(5)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  users     User[]
+  suppliers Supplier[]
+  items     Item[]
+  schedules Schedule[]
+  reminders ReminderInstance[]
+  messages  MessageLog[]
+
+  @@map("tenants")
+}
+
+model User {
+  id             String      @id @default(uuid()) @db.Uuid
+  tenantId       String      @db.Uuid
+  tenant         Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name           String
+  role           Role        @default(STAFF)
+  chatChannel    ChatChannel @default(TELEGRAM)
+  chatUserId     String? // telegram chat id / viber id — set after linking
+  linkCode       String?     @unique // one-time code used to link the chat account
+  supabaseAuthId String?     @unique @db.Uuid // present for web-admin login users
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  schedules          Schedule[]
+  confirmedReminders ReminderInstance[] @relation("ConfirmedBy")
+
+  @@index([tenantId])
+  @@index([tenantId, chatChannel, chatUserId])
+  @@map("users")
+}
+
+model Supplier {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  contact   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items Item[]
+
+  @@index([tenantId])
+  @@map("suppliers")
+}
+
+model Item {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @db.Uuid
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name       String
+  supplierId String   @db.Uuid
+  supplier   Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  unit       String?
+  notes      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  schedules Schedule[]
+
+  @@index([tenantId])
+  @@index([supplierId])
+  @@map("items")
+}
+
+/// When and how often an item must be ordered, and who is responsible.
+model Schedule {
+  id                String   @id @default(uuid()) @db.Uuid
+  tenantId          String   @db.Uuid
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  itemId            String   @db.Uuid
+  item              Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  assignedUserId    String   @db.Uuid
+  assignedUser      User     @relation(fields: [assignedUserId], references: [id], onDelete: Restrict)
+  reminderTimeOfDay String // "HH:mm" in the tenant's timezone
+  recurrence        Json // discriminated union, validated by zod in the app layer
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  reminders ReminderInstance[]
+
+  @@index([tenantId])
+  @@index([itemId])
+  @@map("schedules")
+}
+
+/// A concrete occurrence for one day. The scheduler drives this; the calendar reads it.
+model ReminderInstance {
+  id                String         @id @default(uuid()) @db.Uuid
+  tenantId          String         @db.Uuid
+  tenant            Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  scheduleId        String         @db.Uuid
+  schedule          Schedule       @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  dueDate           DateTime       @db.Date
+  status            ReminderStatus @default(PENDING)
+  sentCount         Int            @default(0)
+  lastSentAt        DateTime?
+  nextNudgeAt       DateTime?
+  confirmedAt       DateTime?
+  confirmedByUserId String?        @db.Uuid
+  confirmedByUser   User?          @relation("ConfirmedBy", fields: [confirmedByUserId], references: [id])
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  @@unique([scheduleId, dueDate]) // makes materialization idempotent
+  @@index([tenantId])
+  @@index([status, nextNudgeAt])
+  @@map("reminder_instances")
+}
+
+/// Audit trail of inbound/outbound chat messages, for debugging.
+model MessageLog {
+  id         String      @id @default(uuid()) @db.Uuid
+  tenantId   String      @db.Uuid
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  direction  String // "out" | "in"
+  channel    ChatChannel
+  chatUserId String?
+  payload    Json
+  createdAt  DateTime    @default(now())
+
+  @@index([tenantId, createdAt])
+  @@map("message_logs")
+}
