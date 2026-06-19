@@ -35,3 +35,6 @@ next-env.d.ts
 
 # design system import (reference; app-relevant parts copied into apps/web)
 _design-import/
+
+# machine-specific preview launch config (absolute paths)
+.claude/launch.json

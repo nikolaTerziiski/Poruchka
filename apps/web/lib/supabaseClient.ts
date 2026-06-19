@@ -3,7 +3,12 @@
 import { createClient } from "@supabase/supabase-js";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+// Supabase's new publishable key (sb_publishable_…) replaces the legacy anon key;
+// fall back to the anon key name for older projects.
+const anonKey =
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+  "";
 
 /**
  * Browser Supabase client — used only for auth (register/login/session).
@@ -17,4 +22,4 @@ export const supabase = createClient(url, anonKey, {
 });
 
 export const isSupabaseConfigured =
-  url.length > 0 && anonKey.length > 0 && anonKey !== "REPLACE_WITH_ANON_KEY";
+  url.length > 0 && anonKey.length > 0 && !anonKey.startsWith("REPLACE_");

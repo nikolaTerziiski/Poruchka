@@ -3,26 +3,36 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { supabase, isSupabaseConfigured } from "@/lib/supabaseClient";
-import { Button, Input, Label, Card } from "@/components/ui";
+import { supabase } from "@/lib/supabaseClient";
+import { AuthShell } from "@/components/auth/AuthShell";
+import { Button } from "@/components/ds/Button";
+import { Input } from "@/components/ds/Input";
+import { Field } from "@/components/ds/Field";
+import { Checkbox } from "@/components/ds/Checkbox";
 
 export default function RegisterPage() {
   const router = useRouter();
   const [restaurant, setRestaurant] = useState("");
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [agree, setAgree] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const mismatch = pw2.length > 0 && pw !== pw2;
+  const canSubmit = agree && !mismatch && pw.length > 0 && email.length > 0 && restaurant.length > 0;
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!canSubmit) return;
     setError(null);
     setNotice(null);
     setLoading(true);
     const { data, error } = await supabase.auth.signUp({
       email,
-      password,
+      password: pw,
       options: { data: { restaurant_name: restaurant } },
     });
     setLoading(false);
@@ -30,88 +40,55 @@ export default function RegisterPage() {
       setError(error.message);
       return;
     }
-    // If email confirmation is on, there's no session yet.
     if (data.session) {
       router.push("/dashboard");
     } else {
-      setNotice(
-        "Account created. Check your email to confirm, then sign in.",
-      );
+      setNotice("Account created. Check your email to confirm, then sign in.");
     }
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-4">
-      <div className="w-full max-w-md">
-        <div className="mb-8 text-center">
-          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-600 text-xl font-bold text-white">
-            P
-          </div>
-          <h1 className="text-2xl font-semibold text-slate-900">
-            Create your restaurant
-          </h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Start sending ordering reminders in minutes
-          </p>
-        </div>
-
-        <Card className="p-6">
-          {!isSupabaseConfigured && (
-            <div className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              Supabase anon key not configured yet — set
-              NEXT_PUBLIC_SUPABASE_ANON_KEY in apps/web/.env.local to enable
-              registration.
-            </div>
-          )}
-          <form onSubmit={onSubmit} className="space-y-4">
-            <div>
-              <Label htmlFor="restaurant">Restaurant name</Label>
-              <Input
-                id="restaurant"
-                required
-                value={restaurant}
-                onChange={(e) => setRestaurant(e.target.value)}
-                placeholder="Family Restaurant"
-              />
-            </div>
-            <div>
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@restaurant.bg"
-              />
-            </div>
-            <div>
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                required
-                minLength={6}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="At least 6 characters"
-              />
-            </div>
-            {error && <p className="text-sm text-red-600">{error}</p>}
-            {notice && <p className="text-sm text-emerald-600">{notice}</p>}
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "Creating…" : "Create account"}
-            </Button>
-          </form>
-        </Card>
-
-        <p className="mt-6 text-center text-sm text-slate-500">
+    <AuthShell
+      title="Create your restaurant"
+      subtitle="Start sending ordering reminders in minutes"
+      footer={
+        <>
           Already have an account?{" "}
-          <Link href="/login" className="font-medium text-indigo-600 hover:underline">
+          <Link href="/login" style={{ fontWeight: 600 }}>
             Sign in
           </Link>
-        </p>
-      </div>
-    </main>
+        </>
+      }
+    >
+      <form onSubmit={onSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <Field label="Restaurant name" htmlFor="rname">
+          <Input id="rname" size="lg" required value={restaurant} onChange={(e) => setRestaurant(e.target.value)} placeholder="Mehana Sofia" />
+        </Field>
+        <Field label="Email" htmlFor="email">
+          <Input id="email" type="email" size="lg" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@restaurant.bg" />
+        </Field>
+        <Field label="Password" htmlFor="pw">
+          <Input id="pw" type="password" size="lg" required value={pw} onChange={(e) => setPw(e.target.value)} placeholder="At least 6 characters" />
+        </Field>
+        <Field label="Confirm password" htmlFor="pw2" error={mismatch ? "Passwords don't match" : undefined}>
+          <Input id="pw2" type="password" size="lg" invalid={mismatch} required value={pw2} onChange={(e) => setPw2(e.target.value)} placeholder="••••••••" />
+        </Field>
+        <Checkbox
+          id="agree"
+          checked={agree}
+          onChange={(e) => setAgree(e.target.checked)}
+          label={
+            <span>
+              I agree to the <Link href="/terms">Terms</Link> &amp; <Link href="/privacy">Privacy Policy</Link>
+            </span>
+          }
+        />
+        {error && <p style={{ fontSize: 13, color: "var(--red-600)", margin: 0 }}>{error}</p>}
+        {notice && <p style={{ fontSize: 13, color: "var(--green-700)", margin: 0 }}>{notice}</p>}
+        <Button type="submit" variant="primary" size="lg" disabled={!canSubmit || loading} style={{ width: "100%", marginTop: 2 }}>
+          {loading ? "Creating…" : "Create account"}
+        </Button>
+      </form>
+    </AuthShell>
   );
 }
