@@ -4,6 +4,7 @@ import { ScheduleModule } from "@nestjs/schedule";
 import { PrismaModule } from "./prisma/prisma.module";
 import { ChannelsModule } from "./channels/channels.module";
 import { DevModule } from "./dev/dev.module";
+import { FeaturesModule } from "./features/features.module";
 import { HealthController } from "./health.controller";
 
 @Module({
@@ -13,6 +14,7 @@ import { HealthController } from "./health.controller";
     PrismaModule,
     ChannelsModule,
     DevModule,
+    FeaturesModule,
   ],
   controllers: [HealthController],
 })
