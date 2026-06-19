@@ -5,6 +5,7 @@ import { PrismaModule } from "./prisma/prisma.module";
 import { ChannelsModule } from "./channels/channels.module";
 import { DevModule } from "./dev/dev.module";
 import { FeaturesModule } from "./features/features.module";
+import { SchedulerModule } from "./scheduler/scheduler.module";
 import { HealthController } from "./health.controller";
 
 @Module({
@@ -15,6 +16,7 @@ import { HealthController } from "./health.controller";
     ChannelsModule,
     DevModule,
     FeaturesModule,
+    SchedulerModule,
   ],
   controllers: [HealthController],
 })
