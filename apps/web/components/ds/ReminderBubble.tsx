@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { CSSProperties } from "react";
+import { useLang } from "@/lib/i18n";
 
 export interface ReminderBubbleProps {
   item?: string;
@@ -14,7 +15,8 @@ export interface ReminderBubbleProps {
 
 /**
  * ReminderBubble — the realistic Telegram message mock (ported from the DS).
- * Mirrors the real bot copy from apps/api (dev.controller / bot service).
+ * Mirrors the real bot copy from apps/api (dev.controller / bot service),
+ * localized EN/BG to match the rest of the UI.
  */
 export function ReminderBubble({
   item = "Pork Meat",
@@ -25,6 +27,12 @@ export function ReminderBubble({
   style = {},
 }: ReminderBubbleProps) {
   const [hover, setHover] = useState(false);
+  const lang = useLang();
+  const t =
+    lang === "bg"
+      ? { tap: "Натиснете „Готово“, след като я подадете.", done: "Готово", confirmed: "Поръчано · потвърдено" }
+      : { tap: "Tap Done when it's ordered.", done: "Done", confirmed: "Ordered · confirmed" };
+
   return (
     <div style={{ width: 340, maxWidth: "100%", fontFamily: "var(--font-sans)", ...style }}>
       {/* Bot row */}
@@ -62,13 +70,20 @@ export function ReminderBubble({
         }}
       >
         <div style={{ fontSize: "var(--text-base)", lineHeight: "var(--leading-snug)", color: "var(--text-strong)" }}>
-          <span aria-hidden>🛒</span> Order{" "}
-          <strong style={{ fontWeight: "var(--weight-semibold)" as unknown as number }}>{item}</strong> from{" "}
-          <strong style={{ fontWeight: "var(--weight-semibold)" as unknown as number }}>{supplier}</strong> today.
+          <span aria-hidden>🛒</span>{" "}
+          {lang === "bg" ? (
+            <>
+              Поръчай <strong style={{ fontWeight: "var(--weight-semibold)" as unknown as number }}>{item}</strong> от{" "}
+              <strong style={{ fontWeight: "var(--weight-semibold)" as unknown as number }}>{supplier}</strong> днес.
+            </>
+          ) : (
+            <>
+              Order <strong style={{ fontWeight: "var(--weight-semibold)" as unknown as number }}>{item}</strong> from{" "}
+              <strong style={{ fontWeight: "var(--weight-semibold)" as unknown as number }}>{supplier}</strong> today.
+            </>
+          )}
         </div>
-        <div style={{ marginTop: 6, fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>
-          Tap Done when it&apos;s ordered.
-        </div>
+        <div style={{ marginTop: 6, fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>{t.tap}</div>
 
         <div style={{ marginTop: 14 }}>
           {confirmed ? (
@@ -90,7 +105,7 @@ export function ReminderBubble({
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
-              Ordered · confirmed
+              {t.confirmed}
             </div>
           ) : (
             <button
@@ -118,7 +133,7 @@ export function ReminderBubble({
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
-              Done
+              {t.done}
             </button>
           )}
         </div>
