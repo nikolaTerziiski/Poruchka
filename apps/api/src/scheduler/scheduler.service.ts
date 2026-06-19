@@ -4,6 +4,7 @@ import { DateTime } from "luxon";
 import type { Recurrence } from "@poruchka/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { NOTIFICATION_CHANNEL, NotificationChannel } from "../channels/notification-channel.port";
+import { confirmButtonLabel, reminderMessage } from "../channels/bot-copy";
 import { recurrenceMatchesDate } from "../reminders/recurrence";
 
 /**
@@ -103,12 +104,17 @@ export class SchedulerService {
         continue;
       }
 
-      const text = `🛒 Order ${r.schedule.item.name} from ${r.schedule.item.supplier.name} today. Tap Done when it's ordered.`;
+      const text = reminderMessage(t.language, {
+        item: r.schedule.item.name,
+        supplier: r.schedule.item.supplier.name,
+        unit: r.schedule.item.unit,
+        note: r.schedule.item.notes,
+      });
       try {
         await this.channel.send({
           chatUserId: user.chatUserId,
           text,
-          buttons: [{ label: "✅ Done", payload: `confirm:${r.id}` }],
+          buttons: [{ label: confirmButtonLabel(t.language), payload: `confirm:${r.id}` }],
         });
       } catch (e) {
         this.logger.error(`send failed for reminder ${r.id}: ${e instanceof Error ? e.message : String(e)}`);

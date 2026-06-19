@@ -22,6 +22,7 @@ interface Item {
   id: string;
   name: string;
   unit: string | null;
+  notes: string | null;
   supplierId: string;
   supplier: { id: string; name: string };
 }
@@ -42,6 +43,7 @@ export default function ItemsPage() {
   const [name, setName] = useState<string>("");
   const [supplierId, setSupplierId] = useState<string>("");
   const [unit, setUnit] = useState<string>("");
+  const [notes, setNotes] = useState<string>("");
   const [saving, setSaving] = useState<boolean>(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -84,6 +86,7 @@ export default function ItemsPage() {
     setName("");
     setSupplierId(suppliers[0]?.id ?? "");
     setUnit("");
+    setNotes("");
     setFormError(null);
     setDialog({ kind: "create" });
   }
@@ -92,6 +95,7 @@ export default function ItemsPage() {
     setName(item.name);
     setSupplierId(item.supplierId);
     setUnit(item.unit ?? "");
+    setNotes(item.notes ?? "");
     setFormError(null);
     setDialog({ kind: "edit", item });
   }
@@ -105,6 +109,7 @@ export default function ItemsPage() {
     if (!dialog) return;
     const trimmedName = name.trim();
     const trimmedUnit = unit.trim();
+    const trimmedNotes = notes.trim();
     if (!trimmedName || !supplierId) return;
 
     setSaving(true);
@@ -117,6 +122,7 @@ export default function ItemsPage() {
             name: trimmedName,
             supplierId,
             ...(trimmedUnit ? { unit: trimmedUnit } : {}),
+            ...(trimmedNotes ? { notes: trimmedNotes } : {}),
           }),
         });
       } else {
@@ -126,6 +132,7 @@ export default function ItemsPage() {
             name: trimmedName,
             supplierId,
             unit: trimmedUnit,
+            notes: trimmedNotes,
           }),
         });
       }
@@ -275,6 +282,14 @@ export default function ItemsPage() {
                 placeholder="kg, keg, tray…"
                 value={unit}
                 onChange={(e) => setUnit(e.target.value)}
+              />
+            </Field>
+            <Field label="Order note" htmlFor="item-notes" hint="What exactly to order — shown in the reminder (e.g. ≈20 kg, lean)">
+              <Input
+                id="item-notes"
+                placeholder="≈20 kg, lean for the grill"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
               />
             </Field>
             {formError ? (

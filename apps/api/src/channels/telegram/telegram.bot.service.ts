@@ -6,6 +6,12 @@ import {
 } from "@nestjs/common";
 import { Bot, Context } from "grammy";
 import { PrismaService } from "../../prisma/prisma.service";
+import {
+  alreadyDoneToast,
+  confirmedMessage,
+  confirmToast,
+  linkedMessage,
+} from "../bot-copy";
 
 /**
  * Owns the grammY Bot: starts long polling (no public webhook needed for the
@@ -48,6 +54,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       }
       const user = await this.prisma.user.findUnique({
         where: { linkCode: code },
+        include: { tenant: true },
       });
       if (!user) {
         await ctx.reply("This link is invalid or has already been used.");
@@ -57,9 +64,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         where: { id: user.id },
         data: { chatUserId: chatId, chatChannel: "TELEGRAM", linkCode: null },
       });
-      await ctx.reply(
-        `✅ Connected, ${user.name}. You'll receive your ordering reminders here.`,
-      );
+      await ctx.reply(linkedMessage(user.tenant.language, user.name));
       this.logger.log(`Linked user ${user.id} to Telegram chat ${chatId}`);
     });
 
@@ -86,9 +91,15 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     const chatId = String(ctx.chat?.id ?? ctx.from?.id);
     const reminder = await this.prisma.reminderInstance.findUnique({
       where: { id: reminderId },
+      include: { tenant: true },
     });
-    if (!reminder || reminder.status === "CONFIRMED") {
-      await ctx.answerCallbackQuery({ text: "Already done ✓" });
+    if (!reminder) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+    const lang = reminder.tenant.language;
+    if (reminder.status === "CONFIRMED") {
+      await ctx.answerCallbackQuery({ text: alreadyDoneToast(lang) });
       return;
     }
     const user = await this.prisma.user.findFirst({
@@ -103,9 +114,14 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         nextNudgeAt: null,
       },
     });
-    await ctx.answerCallbackQuery({ text: "Marked as ordered ✓" });
+    await ctx.answerCallbackQuery({ text: confirmToast(lang) });
     try {
       await ctx.editMessageReplyMarkup();
+    } catch {
+      /* ignore */
+    }
+    try {
+      await ctx.reply(confirmedMessage(lang));
     } catch {
       /* ignore */
     }

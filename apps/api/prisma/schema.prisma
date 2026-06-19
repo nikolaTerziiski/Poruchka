@@ -39,6 +39,7 @@ model Tenant {
   quietHoursEnd      Int      @default(8) // …until here
   renudgeIntervalMin Int      @default(60)
   maxNudges          Int      @default(5)
+  language           String   @default("bg") // bot message language: "bg" | "en"
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
