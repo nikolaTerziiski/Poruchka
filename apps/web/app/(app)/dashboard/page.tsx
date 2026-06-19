@@ -6,8 +6,41 @@ import { ChevronLeft, ChevronRight, CalendarPlus } from "lucide-react";
 import { Button } from "@/components/ds/Button";
 import { PageHead } from "@/components/ds/PageHead";
 import { api } from "@/lib/api";
+import { useTr, useLang, type Lang } from "@/lib/i18n";
 
-const LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const LABELS = {
+  en: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+  bg: ["Пон", "Вт", "Ср", "Чет", "Пет", "Съб", "Нед"],
+} as const;
+
+const M = {
+  en: {
+    title: "Order calendar",
+    weekOf: (range: string) => `Week of ${range}`,
+    today: "Today",
+    prevWeek: "Previous week",
+    nextWeek: "Next week",
+    statPending: "Pending today & ahead",
+    statConfirmed: "Confirmed this week",
+    statEscalated: "Escalated — needs attention",
+    emptyTitle: "No orders this week",
+    emptyDesc: "Create a schedule (e.g. Pork Meat from Metro, every Wednesday) — reminders will show up here.",
+    createSchedule: "Create a schedule",
+  },
+  bg: {
+    title: "Календар на поръчките",
+    weekOf: (range: string) => `Седмица ${range}`,
+    today: "Днес",
+    prevWeek: "Предходна седмица",
+    nextWeek: "Следваща седмица",
+    statPending: "Предстоящи (днес и напред)",
+    statConfirmed: "Потвърдени тази седмица",
+    statEscalated: "Ескалирани — изискват внимание",
+    emptyTitle: "Няма поръчки тази седмица",
+    emptyDesc: "Създайте график (напр. свинско месо от Метро, всяка сряда) — напомнянията ще се появят тук.",
+    createSchedule: "Създай график",
+  },
+} as const;
 
 interface Reminder {
   date: string;
@@ -26,18 +59,18 @@ function toISODate(d: Date) {
   return `${y}-${m}-${day}`;
 }
 
-function computeWeek() {
+function computeWeek(lang: Lang) {
   const today = new Date();
   const mondayOffset = (today.getDay() + 6) % 7;
   const monday = new Date(today);
   monday.setHours(0, 0, 0, 0);
   monday.setDate(today.getDate() - mondayOffset);
-  const days = LABELS.map((label, i) => {
+  const days = LABELS[lang].map((label, i) => {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
     return { label, date: d.getDate(), iso: toISODate(d), isToday: d.toDateString() === today.toDateString() };
   });
-  const month = monday.toLocaleString("en-US", { month: "long" });
+  const month = monday.toLocaleString(lang === "bg" ? "bg-BG" : "en-US", { month: "long" });
   return { days, rangeLabel: `${monday.getDate()}–${days[6].date} ${month}` };
 }
 
@@ -77,7 +110,9 @@ function ReminderChip({ r }: { r: Reminder }) {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { days, rangeLabel } = computeWeek();
+  const t = useTr(M);
+  const lang = useLang();
+  const { days, rangeLabel } = computeWeek(lang);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -110,21 +145,21 @@ export default function DashboardPage() {
   return (
     <div style={{ padding: "32px 36px", maxWidth: 1120, margin: "0 auto" }}>
       <PageHead
-        title="Order calendar"
-        subtitle={`Week of ${rangeLabel}`}
+        title={t.title}
+        subtitle={t.weekOf(rangeLabel)}
         action={
           <div style={{ display: "flex", gap: 8 }}>
-            <Button variant="secondary" size="md" icon={<ChevronLeft size={16} />} aria-label="Previous week" />
-            <Button variant="secondary" size="md">Today</Button>
-            <Button variant="secondary" size="md" icon={<ChevronRight size={16} />} aria-label="Next week" />
+            <Button variant="secondary" size="md" icon={<ChevronLeft size={16} />} aria-label={t.prevWeek} />
+            <Button variant="secondary" size="md">{t.today}</Button>
+            <Button variant="secondary" size="md" icon={<ChevronRight size={16} />} aria-label={t.nextWeek} />
           </div>
         }
       />
 
       <div style={{ display: "flex", gap: 10, marginBottom: 22, flexWrap: "wrap" }}>
-        <SummaryStat tone="pending" n={counts.pending} label="Pending today & ahead" />
-        <SummaryStat tone="confirmed" n={counts.confirmed} label="Confirmed this week" />
-        <SummaryStat tone="escalated" n={counts.escalated} label="Escalated — needs attention" />
+        <SummaryStat tone="pending" n={counts.pending} label={t.statPending} />
+        <SummaryStat tone="confirmed" n={counts.confirmed} label={t.statConfirmed} />
+        <SummaryStat tone="escalated" n={counts.escalated} label={t.statEscalated} />
       </div>
 
       {!loading && reminders.length === 0 && (
@@ -133,12 +168,12 @@ export default function DashboardPage() {
             <CalendarPlus size={20} />
           </span>
           <div style={{ flex: 1, minWidth: 220 }}>
-            <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-strong)" }}>No orders this week</div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-strong)" }}>{t.emptyTitle}</div>
             <div style={{ fontSize: 13.5, color: "var(--text-muted)", marginTop: 2 }}>
-              Create a schedule (e.g. Pork Meat from Metro, every Wednesday) — reminders will show up here.
+              {t.emptyDesc}
             </div>
           </div>
-          <Button variant="primary" size="md" onClick={() => router.push("/schedules")}>Create a schedule</Button>
+          <Button variant="primary" size="md" onClick={() => router.push("/schedules")}>{t.createSchedule}</Button>
         </div>
       )}
 

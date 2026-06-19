@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
 /** Shared centered card layout for login / register / password screens. */
 export function AuthShell({
@@ -15,7 +16,7 @@ export function AuthShell({
 }) {
   return (
     <div style={{ minHeight: "100vh", background: "var(--surface-page)", display: "flex", flexDirection: "column" }}>
-      <div style={{ padding: "20px 24px" }}>
+      <div style={{ padding: "20px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <Link href="/" style={{ display: "inline-flex", alignItems: "center", gap: 10, textDecoration: "none" }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logomark.svg" width={28} height={28} alt="" />
@@ -23,6 +24,7 @@ export function AuthShell({
             Poruchka
           </span>
         </Link>
+        <LanguageSwitcher />
       </div>
 
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px 24px 56px" }}>

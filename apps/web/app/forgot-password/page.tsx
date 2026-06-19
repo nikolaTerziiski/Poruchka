@@ -3,12 +3,38 @@
 import { useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
+import { useTr, useCommon } from "@/lib/i18n";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { Button } from "@/components/ds/Button";
 import { Input } from "@/components/ds/Input";
 import { Field } from "@/components/ds/Field";
 
+const M = {
+  en: {
+    title: "Reset your password",
+    subtitle: "We'll email you a link to set a new one",
+    sentPrefix: "If an account exists for",
+    sentSuffix: ", a reset link is on its way. Check your inbox.",
+    sendLink: "Send reset link",
+    sending: "Sending…",
+    remembered: "Remembered it?",
+    backToSignIn: "Back to sign in",
+  },
+  bg: {
+    title: "Възстановяване на паролата",
+    subtitle: "Ще ви изпратим имейл с връзка за задаване на нова",
+    sentPrefix: "Ако съществува профил за",
+    sentSuffix: ", връзката за възстановяване вече е на път. Проверете пощата си.",
+    sendLink: "Изпрати връзка за възстановяване",
+    sending: "Изпращане…",
+    remembered: "Сетихте ли се?",
+    backToSignIn: "Обратно към входа",
+  },
+} as const;
+
 export default function ForgotPasswordPage() {
+  const t = useTr(M);
+  const c = useCommon();
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
@@ -31,29 +57,29 @@ export default function ForgotPasswordPage() {
 
   return (
     <AuthShell
-      title="Reset your password"
-      subtitle="We'll email you a link to set a new one"
+      title={t.title}
+      subtitle={t.subtitle}
       footer={
         <>
-          Remembered it?{" "}
+          {t.remembered}{" "}
           <Link href="/login" style={{ fontWeight: 600 }}>
-            Back to sign in
+            {t.backToSignIn}
           </Link>
         </>
       }
     >
       {sent ? (
         <p style={{ fontSize: 14, color: "var(--text-body)", margin: 0 }}>
-          If an account exists for <strong>{email}</strong>, a reset link is on its way. Check your inbox.
+          {t.sentPrefix} <strong>{email}</strong>{t.sentSuffix}
         </p>
       ) : (
         <form onSubmit={onSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <Field label="Email" htmlFor="email">
+          <Field label={c.email} htmlFor="email">
             <Input id="email" type="email" size="lg" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@restaurant.bg" />
           </Field>
           {error && <p style={{ fontSize: 13, color: "var(--red-600)", margin: 0 }}>{error}</p>}
           <Button type="submit" variant="primary" size="lg" disabled={loading} style={{ width: "100%", marginTop: 2 }}>
-            {loading ? "Sending…" : "Send reset link"}
+            {loading ? t.sending : t.sendLink}
           </Button>
         </form>
       )}

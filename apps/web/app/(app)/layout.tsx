@@ -10,28 +10,61 @@ import {
   Repeat,
   Users,
   Bell,
-  User as UserIcon,
   LogOut,
   Menu,
   X,
 } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "@/lib/supabaseClient";
+import { useTr } from "@/lib/i18n";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
-const NAV = [
-  { href: "/dashboard", label: "Calendar", Icon: CalendarDays },
-  { href: "/suppliers", label: "Suppliers", Icon: Store },
-  { href: "/items", label: "Items", Icon: Package },
-  { href: "/schedules", label: "Schedules", Icon: Repeat },
-  { href: "/team", label: "Team", Icon: Users },
-  { href: "/settings", label: "Notifications", Icon: Bell },
+type NavKey = "calendar" | "suppliers" | "items" | "schedules" | "team" | "notifications";
+
+const NAV: { href: string; key: NavKey; Icon: typeof CalendarDays }[] = [
+  { href: "/dashboard", key: "calendar", Icon: CalendarDays },
+  { href: "/suppliers", key: "suppliers", Icon: Store },
+  { href: "/items", key: "items", Icon: Package },
+  { href: "/schedules", key: "schedules", Icon: Repeat },
+  { href: "/team", key: "team", Icon: Users },
+  { href: "/settings", key: "notifications", Icon: Bell },
 ];
+
+const M = {
+  en: {
+    calendar: "Calendar",
+    suppliers: "Suppliers",
+    items: "Items",
+    schedules: "Schedules",
+    team: "Team",
+    notifications: "Notifications",
+    loading: "Loading…",
+    yourRestaurant: "Your restaurant",
+    signOut: "Sign out",
+    openMenu: "Open menu",
+    closeMenu: "Close menu",
+  },
+  bg: {
+    calendar: "Календар",
+    suppliers: "Доставчици",
+    items: "Артикули",
+    schedules: "Графици",
+    team: "Екип",
+    notifications: "Известия",
+    loading: "Зареждане…",
+    yourRestaurant: "Вашият ресторант",
+    signOut: "Изход",
+    openMenu: "Отвори менюто",
+    closeMenu: "Затвори менюто",
+  },
+} as const;
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+  const t = useTr(M);
   const [ready, setReady] = useState(false);
   const [email, setEmail] = useState<string | null>(null);
-  const [restaurant, setRestaurant] = useState("Your restaurant");
+  const [restaurant, setRestaurant] = useState("");
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -67,13 +100,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   if (!ready) {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-faint)", fontSize: 14 }}>
-        Loading…
+        {t.loading}
       </div>
     );
   }
 
+  const displayName = restaurant || t.yourRestaurant;
   const initials =
-    restaurant
+    displayName
       .split(/\s+/)
       .map((w) => w[0])
       .filter(Boolean)
@@ -105,7 +139,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
       {/* Mobile top bar */}
       <div className="app-topbar">
-        <button onClick={() => setOpen(true)} aria-label="Open menu" style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--text-body)", display: "inline-flex", padding: 6 }}>
+        <button onClick={() => setOpen(true)} aria-label={t.openMenu} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--text-body)", display: "inline-flex", padding: 6 }}>
           <Menu size={22} />
         </button>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -124,13 +158,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <img src="/logomark.svg" width={30} height={30} alt="" />
             <span style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 19, letterSpacing: "-0.02em", color: "var(--text-strong)" }}>Poruchka</span>
           </Link>
-          <button className="app-close" onClick={() => setOpen(false)} aria-label="Close menu" style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--text-muted)", padding: 4 }}>
+          <button className="app-close" onClick={() => setOpen(false)} aria-label={t.closeMenu} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--text-muted)", padding: 4 }}>
             <X size={18} />
           </button>
         </div>
 
         <nav style={{ flex: 1, padding: "4px 12px", display: "flex", flexDirection: "column", gap: 2 }}>
-          {NAV.map(({ href, label, Icon }) => {
+          {NAV.map(({ href, key, Icon }) => {
             const on = pathname === href;
             return (
               <Link
@@ -150,7 +184,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 }}
               >
                 <Icon size={18} color={on ? "var(--brand-600)" : "var(--text-muted)"} />
-                {label}
+                {t[key]}
               </Link>
             );
           })}
@@ -162,16 +196,19 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               {initials}
             </span>
             <span style={{ overflow: "hidden" }}>
-              <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: "var(--text-strong)", whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>{restaurant}</span>
+              <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: "var(--text-strong)", whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>{displayName}</span>
               <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>{email ?? ""}</span>
             </span>
           </Link>
-          <button
-            onClick={signOut}
-            style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", marginTop: 4, padding: "8px 10px", borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", color: "var(--text-muted)", fontSize: 13, fontWeight: 500 }}
-          >
-            <LogOut size={16} /> Sign out
-          </button>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6, paddingLeft: 4 }}>
+            <button
+              onClick={signOut}
+              style={{ display: "flex", alignItems: "center", gap: 9, padding: "8px 10px", borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", color: "var(--text-muted)", fontSize: 13, fontWeight: 500 }}
+            >
+              <LogOut size={16} /> {t.signOut}
+            </button>
+            <LanguageSwitcher compact />
+          </div>
         </div>
       </aside>
 

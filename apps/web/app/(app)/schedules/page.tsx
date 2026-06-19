@@ -12,8 +12,8 @@ import { EmptyState } from "@/components/ds/EmptyState";
 import { Dialog } from "@/components/ds/Dialog";
 import { PageHead } from "@/components/ds/PageHead";
 import { api } from "@/lib/api";
-import { recurrenceLabel, WEEKDAYS } from "@/lib/recurrence";
 import type { Recurrence } from "@poruchka/shared";
+import { useTr, useCommon, useLang, type Lang } from "@/lib/i18n";
 
 interface Schedule {
   id: string;
@@ -38,13 +38,142 @@ type Mode = "daily" | "weekly" | "interval";
 
 const TODAY = new Date().toISOString().slice(0, 10);
 
-const MODE_OPTIONS: [Mode, string][] = [
-  ["daily", "Daily"],
-  ["weekly", "Weekly"],
-  ["interval", "Every N days"],
-];
+/** ISO weekday order (1 = Mon … 7 = Sun) for toggle labels, per language. */
+const WEEKDAY_LABELS: Record<Lang, string[]> = {
+  en: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+  bg: ["Пон", "Вт", "Ср", "Чет", "Пет", "Съб", "Нед"],
+};
+
+/** Full weekday names used inside the recurrence sentence, per language. */
+const WEEKDAY_FULL: Record<Lang, string[]> = {
+  en: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+  bg: ["понеделник", "вторник", "сряда", "четвъртък", "петък", "събота", "неделя"],
+};
+
+/**
+ * Localized recurrence label computed inline from the recurrence object.
+ * bg uses gendered "Всеки/Всяка" before a weekday — "Всяка сряда", "Всеки ден",
+ * "На всеки 14 дни".
+ */
+function localizedRecurrenceLabel(r: Recurrence, lang: Lang): string {
+  if (lang === "bg") {
+    if (r.type === "daily") return "Всеки ден";
+    if (r.type === "interval") {
+      const n = r.everyNDays;
+      return n === 1 ? "Всеки ден" : `На всеки ${n} дни`;
+    }
+    if (r.type === "weekly") {
+      if (r.weekdays.length === 7) return "Всеки ден";
+      // "Всяка сряда" but "Всеки понеделник/вторник/…" — only сряда/събота/неделя are feminine.
+      const feminine = new Set([3, 6, 7]); // сряда, събота, неделя
+      return r.weekdays
+        .map((d) => `${feminine.has(d) ? "Всяка" : "Всеки"} ${WEEKDAY_FULL.bg[d - 1]}`)
+        .join(", ");
+    }
+    return "";
+  }
+  // en
+  if (r.type === "daily") return "Every day";
+  if (r.type === "interval") {
+    const n = r.everyNDays;
+    return n === 1 ? "Every day" : `Every ${n} days`;
+  }
+  if (r.type === "weekly") {
+    if (r.weekdays.length === 7) return "Every day";
+    return "Every " + r.weekdays.map((d) => WEEKDAY_FULL.en[d - 1]).join(", ");
+  }
+  return "";
+}
+
+const M = {
+  en: {
+    title: "Schedules",
+    subtitle: "When each item is ordered, and who's responsible",
+    newSchedule: "New schedule",
+    addItemFirst: "Add an item first",
+    loadFailed: "Failed to load schedules.",
+    loadingSchedules: "Loading schedules…",
+    emptyTitle: "No schedules yet",
+    emptyDesc:
+      "Tell Poruchka what to order and when — e.g. Pork Meat from Metro, every Wednesday at 09:00.",
+    colItem: "Item",
+    colRecurrence: "Recurrence",
+    colTime: "Time",
+    colResponsible: "Responsible",
+    colActive: "Active",
+    on: "On",
+    paused: "Paused",
+    pauseSchedule: "Pause schedule",
+    activateSchedule: "Activate schedule",
+    editSchedule: "Edit schedule",
+    deleteScheduleAria: "Delete schedule",
+    deleteTitle: "Delete this schedule?",
+    deleteConfirm: "Delete schedule",
+    dialogEditTitle: "Edit schedule",
+    dialogNewTitle: "New schedule",
+    saveChanges: "Save changes",
+    createSchedule: "Create schedule",
+    fieldItem: "Item",
+    fieldResponsible: "Responsible",
+    selectItem: "Select an item…",
+    selectPerson: "Select a person…",
+    recurrence: "Recurrence",
+    modeDaily: "Daily",
+    modeWeekly: "Weekly",
+    modeInterval: "Every N days",
+    every: "Every",
+    days: "days",
+    dailyHint: "A reminder will be sent every day at the time below.",
+    reminderTime: "Reminder time",
+    reminderTimeHint: "In the restaurant's timezone (Europe/Sofia)",
+  },
+  bg: {
+    title: "Графици",
+    subtitle: "Кога се поръчва всеки артикул и кой отговаря",
+    newSchedule: "Нов график",
+    addItemFirst: "Първо добавете артикул",
+    loadFailed: "Неуспешно зареждане на графиците.",
+    loadingSchedules: "Зареждане на графиците…",
+    emptyTitle: "Все още няма графици",
+    emptyDesc:
+      "Кажете на Poruchka какво и кога да поръчва — напр. свинско месо от Метро, всяка сряда в 09:00.",
+    colItem: "Артикул",
+    colRecurrence: "Повторение",
+    colTime: "Час",
+    colResponsible: "Отговорник",
+    colActive: "Активен",
+    on: "Включен",
+    paused: "На пауза",
+    pauseSchedule: "Постави на пауза",
+    activateSchedule: "Активирай графика",
+    editSchedule: "Редактирай графика",
+    deleteScheduleAria: "Изтрий графика",
+    deleteTitle: "Да изтрием ли този график?",
+    deleteConfirm: "Изтрий графика",
+    dialogEditTitle: "Редактиране на график",
+    dialogNewTitle: "Нов график",
+    saveChanges: "Запази промените",
+    createSchedule: "Създай график",
+    fieldItem: "Артикул",
+    fieldResponsible: "Отговорник",
+    selectItem: "Изберете артикул…",
+    selectPerson: "Изберете човек…",
+    recurrence: "Повторение",
+    modeDaily: "Ежедневно",
+    modeWeekly: "Седмично",
+    modeInterval: "На всеки N дни",
+    every: "На всеки",
+    days: "дни",
+    dailyHint: "Напомняне ще се изпраща всеки ден в посочения по-долу час.",
+    reminderTime: "Час за напомняне",
+    reminderTimeHint: "В часовата зона на ресторанта (Europe/Sofia)",
+  },
+} as const;
 
 export default function SchedulesPage() {
+  const t = useTr(M);
+  const c = useCommon();
+  const lang = useLang();
   const [rows, setRows] = useState<Schedule[]>([]);
   const [items, setItems] = useState<ItemOption[]>([]);
   const [team, setTeam] = useState<TeamMember[]>([]);
@@ -73,11 +202,11 @@ export default function SchedulesPage() {
       setItems(itemList);
       setTeam(teamList);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load schedules.");
+      setError(e instanceof Error ? e.message : t.loadFailed);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void load();
@@ -107,8 +236,8 @@ export default function SchedulesPage() {
   return (
     <div style={{ padding: "32px 36px", maxWidth: 1120, margin: "0 auto" }}>
       <PageHead
-        title="Schedules"
-        subtitle="When each item is ordered, and who's responsible"
+        title={t.title}
+        subtitle={t.subtitle}
         action={
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
             <Button
@@ -119,10 +248,10 @@ export default function SchedulesPage() {
                 setCreating(true);
               }}
             >
-              New schedule
+              {t.newSchedule}
             </Button>
             {noItems ? (
-              <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Add an item first</span>
+              <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{t.addItemFirst}</span>
             ) : null}
           </div>
         }
@@ -146,13 +275,13 @@ export default function SchedulesPage() {
 
       {loading ? (
         <div style={{ padding: "48px 24px", textAlign: "center", color: "var(--text-muted)", fontSize: 14 }}>
-          Loading schedules…
+          {t.loadingSchedules}
         </div>
       ) : rows.length === 0 ? (
         <EmptyState
           icon={<Repeat size={22} />}
-          title="No schedules yet"
-          description="Tell Poruchka what to order and when — e.g. Pork Meat from Metro, every Wednesday at 09:00."
+          title={t.emptyTitle}
+          description={t.emptyDesc}
           action={
             <Button
               icon={<Plus size={16} />}
@@ -162,18 +291,18 @@ export default function SchedulesPage() {
                 setCreating(true);
               }}
             >
-              New schedule
+              {t.newSchedule}
             </Button>
           }
         />
       ) : (
         <Table<Schedule>
           columns={[
-            { key: "item", label: "Item" },
-            { key: "recurrence", label: "Recurrence" },
-            { key: "time", label: "Time", width: 90 },
-            { key: "assignee", label: "Responsible" },
-            { key: "active", label: "Active", align: "center", width: 90 },
+            { key: "item", label: t.colItem },
+            { key: "recurrence", label: t.colRecurrence },
+            { key: "time", label: t.colTime, width: 90 },
+            { key: "assignee", label: t.colResponsible },
+            { key: "active", label: t.colActive, align: "center", width: 90 },
             { key: "actions", label: "", align: "right", width: 90 },
           ]}
           rows={rows}
@@ -186,7 +315,8 @@ export default function SchedulesPage() {
                   <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{r.item.supplier.name}</span>
                 </span>
               );
-            if (key === "recurrence") return <Badge tone="accent">{recurrenceLabel(r.recurrence)}</Badge>;
+            if (key === "recurrence")
+              return <Badge tone="accent">{localizedRecurrenceLabel(r.recurrence, lang)}</Badge>;
             if (key === "time")
               return (
                 <span style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--text-body)" }}>
@@ -200,9 +330,9 @@ export default function SchedulesPage() {
                   type="button"
                   onClick={() => void toggleActive(r)}
                   style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
-                  aria-label={r.active ? "Pause schedule" : "Activate schedule"}
+                  aria-label={r.active ? t.pauseSchedule : t.activateSchedule}
                 >
-                  {r.active ? <Badge tone="confirmed" dot>On</Badge> : <Badge tone="neutral">Paused</Badge>}
+                  {r.active ? <Badge tone="confirmed" dot>{t.on}</Badge> : <Badge tone="neutral">{t.paused}</Badge>}
                 </button>
               );
             return (
@@ -211,7 +341,7 @@ export default function SchedulesPage() {
                   variant="ghost"
                   size="sm"
                   icon={<Pencil size={15} />}
-                  aria-label="Edit schedule"
+                  aria-label={t.editSchedule}
                   onClick={() => {
                     setCreating(false);
                     setEditing(r);
@@ -221,7 +351,7 @@ export default function SchedulesPage() {
                   variant="ghost"
                   size="sm"
                   icon={<Trash2 size={15} color="var(--red-500)" />}
-                  aria-label="Delete schedule"
+                  aria-label={t.deleteScheduleAria}
                   onClick={() => setDeleting(r)}
                 />
               </div>
@@ -250,9 +380,10 @@ export default function SchedulesPage() {
       {deleting ? (
         <Dialog
           tone="danger"
-          title="Delete this schedule?"
-          description={`${deleting.item.name} — ${recurrenceLabel(deleting.recurrence)}`}
-          confirmLabel="Delete schedule"
+          title={t.deleteTitle}
+          description={`${deleting.item.name} — ${localizedRecurrenceLabel(deleting.recurrence, lang)}`}
+          confirmLabel={t.deleteConfirm}
+          cancelLabel={c.cancel}
           onCancel={() => setDeleting(null)}
           onConfirm={() => void confirmDelete()}
         />
@@ -274,7 +405,17 @@ function ScheduleDialog({
   onClose: () => void;
   onSaved: () => Promise<void> | void;
 }) {
+  const t = useTr(M);
+  const c = useCommon();
+  const lang = useLang();
   const initialMode: Mode = schedule ? schedule.recurrence.type : "weekly";
+
+  const modeOptions: [Mode, string][] = [
+    ["daily", t.modeDaily],
+    ["weekly", t.modeWeekly],
+    ["interval", t.modeInterval],
+  ];
+  const weekdayLabels = WEEKDAY_LABELS[lang];
 
   const [itemId, setItemId] = useState<string>(schedule?.item.id ?? "");
   const [assignedUserId, setAssignedUserId] = useState<string>(schedule?.assignedUser.id ?? "");
@@ -324,8 +465,9 @@ function ScheduleDialog({
 
   return (
     <Dialog
-      title={schedule ? "Edit schedule" : "New schedule"}
-      confirmLabel={schedule ? "Save changes" : "Create schedule"}
+      title={schedule ? t.dialogEditTitle : t.dialogNewTitle}
+      confirmLabel={schedule ? t.saveChanges : t.createSchedule}
+      cancelLabel={c.cancel}
       width={520}
       confirmDisabled={confirmDisabled}
       busy={busy}
@@ -334,10 +476,10 @@ function ScheduleDialog({
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <Field label="Item">
+          <Field label={t.fieldItem}>
             <Select value={itemId} onChange={(e) => setItemId(e.target.value)}>
               <option value="" disabled>
-                Select an item…
+                {t.selectItem}
               </option>
               {items.map((i) => (
                 <option key={i.id} value={i.id}>
@@ -346,23 +488,23 @@ function ScheduleDialog({
               ))}
             </Select>
           </Field>
-          <Field label="Responsible">
+          <Field label={t.fieldResponsible}>
             <Select value={assignedUserId} onChange={(e) => setAssignedUserId(e.target.value)}>
               <option value="" disabled>
-                Select a person…
+                {t.selectPerson}
               </option>
-              {team.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
+              {team.map((member) => (
+                <option key={member.id} value={member.id}>
+                  {member.name}
                 </option>
               ))}
             </Select>
           </Field>
         </div>
 
-        <Field label="Recurrence">
+        <Field label={t.recurrence}>
           <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-            {MODE_OPTIONS.map(([k, l]) => (
+            {modeOptions.map(([k, l]) => (
               <button
                 key={k}
                 type="button"
@@ -387,11 +529,11 @@ function ScheduleDialog({
 
           {mode === "weekly" ? (
             <div style={{ display: "flex", gap: 6 }}>
-              {WEEKDAYS.map((d, i) => {
+              {weekdayLabels.map((d, i) => {
                 const on = weekdays.includes(i + 1);
                 return (
                   <button
-                    key={d}
+                    key={i}
                     type="button"
                     onClick={() => toggleDay(i + 1)}
                     style={{
@@ -416,7 +558,7 @@ function ScheduleDialog({
 
           {mode === "interval" ? (
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontSize: 14, color: "var(--text-body)" }}>Every</span>
+              <span style={{ fontSize: 14, color: "var(--text-body)" }}>{t.every}</span>
               <Input
                 type="number"
                 min={1}
@@ -424,18 +566,18 @@ function ScheduleDialog({
                 onChange={(e) => setEveryNDays(Math.max(1, Number(e.target.value) || 1))}
                 style={{ width: 80 }}
               />
-              <span style={{ fontSize: 14, color: "var(--text-body)" }}>days</span>
+              <span style={{ fontSize: 14, color: "var(--text-body)" }}>{t.days}</span>
             </div>
           ) : null}
 
           {mode === "daily" ? (
             <p style={{ fontSize: 13, color: "var(--text-muted)", margin: 0 }}>
-              A reminder will be sent every day at the time below.
+              {t.dailyHint}
             </p>
           ) : null}
         </Field>
 
-        <Field label="Reminder time" hint="In the restaurant's timezone (Europe/Sofia)">
+        <Field label={t.reminderTime} hint={t.reminderTimeHint}>
           <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} style={{ width: 140 }} />
         </Field>
       </div>

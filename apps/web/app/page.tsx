@@ -15,6 +15,93 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ds/Button";
 import { ReminderBubble } from "@/components/ds/ReminderBubble";
+import { useTr } from "@/lib/i18n";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+
+const M = {
+  en: {
+    login: "Login",
+    register: "Register",
+    eyebrow: "For restaurant owners",
+    heroTitleLine1: "Never miss a",
+    heroTitleLine2: "supplier order again",
+    heroSubcopy:
+      "Define each good once — item, supplier, schedule. On the due day the right person gets a chat message and confirms with one tap. Miss it, and Poruchka nudges until it's done.",
+    startFree: "Start free",
+    telegramLine: "Reminders over Telegram — free for the pilot. Viber coming next.",
+    heroChat: "Pilot — Family Restaurant chat",
+    item: "Pork Meat",
+    supplier: "Metro",
+    doneMessage: "Done ✓ Ordered 24kg from Metro.",
+    howEyebrow: "How it works",
+    howHeading: "Three steps, then it runs itself",
+    step1Title: "Define each good once",
+    step1Body:
+      "Pork Meat from Metro, every Wednesday at 09:00. Set the item, supplier, schedule and who's responsible.",
+    step2Title: "The right person gets pinged",
+    step2Body:
+      "On the due day they get a Telegram message: “Order Pork Meat from Metro today.” No app to open.",
+    step3Title: "They tap Done",
+    step3Body:
+      "One tap confirms. If it's missed, Poruchka re-nudges hourly within quiet hours, then escalates.",
+    benefit1Title: "See the whole week",
+    benefit1Body:
+      "An order calendar shows what's due, from which supplier, who owns it, and live status.",
+    benefit2Title: "Any rhythm",
+    benefit2Body:
+      "Daily, specific weekdays, or every N days — each item on its own schedule.",
+    benefit3Title: "Built for a team",
+    benefit3Body:
+      "Owner, managers and staff. Assign each order to the person who actually places it.",
+    ctaHeading: "Set up your first reminder today",
+    ctaSubtext: "Free for the pilot. No card required.",
+    createRestaurant: "Create your restaurant",
+    terms: "Terms",
+    privacy: "Privacy",
+    tagline: "поръчка · “order” in Bulgarian",
+  },
+  bg: {
+    login: "Вход",
+    register: "Регистрация",
+    eyebrow: "За собственици на ресторанти",
+    heroTitleLine1: "Никога не пропускайте",
+    heroTitleLine2: "поръчка към доставчик",
+    heroSubcopy:
+      "Задайте всяка стока веднъж — артикул, доставчик, график. В деня на поръчката отговорникът получава съобщение в чата и потвърждава с едно докосване. Пропусне ли го, Poruchka напомня, докато не бъде свършено.",
+    startFree: "Започнете безплатно",
+    telegramLine: "Напомняния през Telegram — безплатно за пилота. Viber предстои.",
+    heroChat: "Пилот — чат на Family Restaurant",
+    item: "Свинско месо",
+    supplier: "Metro",
+    doneMessage: "Готово ✓ Поръчани 24 кг от Metro.",
+    howEyebrow: "Как работи",
+    howHeading: "Три стъпки и работи само",
+    step1Title: "Задайте всяка стока веднъж",
+    step1Body:
+      "Свинско месо от Metro, всяка сряда в 09:00. Задайте артикула, доставчика, графика и кой е отговорен.",
+    step2Title: "Точният човек получава напомняне",
+    step2Body:
+      "В деня на поръчката получава съобщение в Telegram: “Поръчай свинско месо от Metro днес.” Без отваряне на приложение.",
+    step3Title: "Той докосва Готово",
+    step3Body:
+      "Едно докосване потвърждава. Ако се пропусне, Poruchka напомня на всеки час в рамките на работното време, след което ескалира.",
+    benefit1Title: "Виждате цялата седмица",
+    benefit1Body:
+      "Календар на поръчките показва какво предстои, от кой доставчик, кой отговаря и статуса на живо.",
+    benefit2Title: "Всякакъв ритъм",
+    benefit2Body:
+      "Ежедневно, в определени дни от седмицата или на всеки N дни — всеки артикул със собствен график.",
+    benefit3Title: "Създадено за екип",
+    benefit3Body:
+      "Собственик, мениджъри и персонал. Възложете всяка поръчка на човека, който реално я прави.",
+    ctaHeading: "Настройте първото си напомняне днес",
+    ctaSubtext: "Безплатно за пилота. Без карта.",
+    createRestaurant: "Създайте своя ресторант",
+    terms: "Условия",
+    privacy: "Поверителност",
+    tagline: "поръчка · “order” на български",
+  },
+} as const;
 
 function Logo() {
   return (
@@ -55,6 +142,7 @@ function Benefit({ icon, title, children }: { icon: React.ReactNode; title: stri
 
 export default function LandingPage() {
   const router = useRouter();
+  const t = useTr(M);
   const [done, setDone] = useState(false);
 
   return (
@@ -75,8 +163,9 @@ export default function LandingPage() {
         <div style={{ maxWidth: 1120, margin: "0 auto", height: 64, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <Logo />
           <nav style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Button variant="ghost" size="sm" onClick={() => router.push("/login")}>Login</Button>
-            <Button variant="primary" size="sm" onClick={() => router.push("/register")}>Register</Button>
+            <LanguageSwitcher />
+            <Button variant="ghost" size="sm" onClick={() => router.push("/login")}>{t.login}</Button>
+            <Button variant="primary" size="sm" onClick={() => router.push("/register")}>{t.register}</Button>
           </nav>
         </div>
       </header>
@@ -84,32 +173,32 @@ export default function LandingPage() {
       {/* Hero */}
       <section className="lp-hero">
         <div>
-          <span className="eyebrow">For restaurant owners</span>
+          <span className="eyebrow">{t.eyebrow}</span>
           <h1 style={{ fontSize: 52, lineHeight: 1.04, letterSpacing: "-0.03em", marginTop: 14 }}>
-            Never miss a<br />supplier order again
+            {t.heroTitleLine1}<br />{t.heroTitleLine2}
           </h1>
           <p style={{ fontSize: 19, color: "var(--text-body)", lineHeight: 1.55, marginTop: 20, maxWidth: 460 }}>
-            Define each good once — item, supplier, schedule. On the due day the right person gets a chat message and confirms with one tap. Miss it, and Poruchka nudges until it&apos;s done.
+            {t.heroSubcopy}
           </p>
           <div style={{ display: "flex", gap: 12, marginTop: 28, flexWrap: "wrap" }}>
-            <Button variant="primary" size="lg" onClick={() => router.push("/register")} iconRight={<ArrowRight size={18} />}>Start free</Button>
-            <Button variant="secondary" size="lg" onClick={() => router.push("/login")}>Login</Button>
+            <Button variant="primary" size="lg" onClick={() => router.push("/register")} iconRight={<ArrowRight size={18} />}>{t.startFree}</Button>
+            <Button variant="secondary" size="lg" onClick={() => router.push("/login")}>{t.login}</Button>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 22, fontSize: 13, color: "var(--text-muted)" }}>
             <Send size={15} color="var(--brand-500)" />
-            Reminders over Telegram — free for the pilot. Viber coming next.
+            {t.telegramLine}
           </div>
         </div>
 
         {/* Hero visual */}
         <div style={{ position: "relative", background: "linear-gradient(180deg, var(--warm-100), var(--warm-150))", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-2xl)", padding: "32px 28px", boxShadow: "var(--shadow-md)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 22, color: "var(--text-muted)", fontSize: 12 }}>
-            <MessageCircle size={14} /> Pilot — Family Restaurant chat
+            <MessageCircle size={14} /> {t.heroChat}
           </div>
-          <ReminderBubble item="Pork Meat" supplier="Metro" time="09:00" confirmed={done} onConfirm={() => setDone(true)} />
+          <ReminderBubble item={t.item} supplier={t.supplier} time="09:00" confirmed={done} onConfirm={() => setDone(true)} />
           {done && (
             <div style={{ marginTop: 14, marginLeft: "auto", width: "fit-content", maxWidth: 280, background: "var(--brand-500)", color: "#fff", padding: "10px 14px", borderRadius: "16px 16px 4px 16px", fontSize: 14 }}>
-              Done ✓ Ordered 24kg from Metro.
+              {t.doneMessage}
             </div>
           )}
         </div>
@@ -118,17 +207,17 @@ export default function LandingPage() {
       {/* How it works */}
       <section style={{ background: "var(--surface-card)", borderTop: "1px solid var(--border-subtle)", borderBottom: "1px solid var(--border-subtle)" }}>
         <div style={{ maxWidth: 1120, margin: "0 auto", padding: "64px 24px" }}>
-          <span className="eyebrow">How it works</span>
-          <h2 style={{ fontSize: 34, letterSpacing: "-0.02em", marginTop: 12, marginBottom: 44 }}>Three steps, then it runs itself</h2>
+          <span className="eyebrow">{t.howEyebrow}</span>
+          <h2 style={{ fontSize: 34, letterSpacing: "-0.02em", marginTop: 12, marginBottom: 44 }}>{t.howHeading}</h2>
           <div className="lp-grid3">
-            <Step n={1} icon={<ClipboardList size={20} />} title="Define each good once">
-              Pork Meat from Metro, every Wednesday at 09:00. Set the item, supplier, schedule and who&apos;s responsible.
+            <Step n={1} icon={<ClipboardList size={20} />} title={t.step1Title}>
+              {t.step1Body}
             </Step>
-            <Step n={2} icon={<Bell size={20} />} title="The right person gets pinged">
-              On the due day they get a Telegram message: &ldquo;Order Pork Meat from Metro today.&rdquo; No app to open.
+            <Step n={2} icon={<Bell size={20} />} title={t.step2Title}>
+              {t.step2Body}
             </Step>
-            <Step n={3} icon={<CheckCheck size={20} />} title="They tap Done">
-              One tap confirms. If it&apos;s missed, Poruchka re-nudges hourly within quiet hours, then escalates.
+            <Step n={3} icon={<CheckCheck size={20} />} title={t.step3Title}>
+              {t.step3Body}
             </Step>
           </div>
         </div>
@@ -137,14 +226,14 @@ export default function LandingPage() {
       {/* Benefits */}
       <section style={{ maxWidth: 1120, margin: "0 auto", padding: "64px 24px" }}>
         <div className="lp-benefits">
-          <Benefit icon={<CalendarDays size={22} />} title="See the whole week">
-            An order calendar shows what&apos;s due, from which supplier, who owns it, and live status.
+          <Benefit icon={<CalendarDays size={22} />} title={t.benefit1Title}>
+            {t.benefit1Body}
           </Benefit>
-          <Benefit icon={<Repeat size={22} />} title="Any rhythm">
-            Daily, specific weekdays, or every N days — each item on its own schedule.
+          <Benefit icon={<Repeat size={22} />} title={t.benefit2Title}>
+            {t.benefit2Body}
           </Benefit>
-          <Benefit icon={<Users size={22} />} title="Built for a team">
-            Owner, managers and staff. Assign each order to the person who actually places it.
+          <Benefit icon={<Users size={22} />} title={t.benefit3Title}>
+            {t.benefit3Body}
           </Benefit>
         </div>
       </section>
@@ -153,10 +242,10 @@ export default function LandingPage() {
       <section style={{ maxWidth: 1120, margin: "0 auto", padding: "0 24px 72px" }}>
         <div style={{ background: "var(--warm-900)", borderRadius: "var(--radius-2xl)", padding: "48px 44px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24, flexWrap: "wrap" }}>
           <div>
-            <h2 style={{ color: "var(--warm-50)", fontSize: 30, letterSpacing: "-0.02em" }}>Set up your first reminder today</h2>
-            <p style={{ color: "var(--warm-300)", fontSize: 16, marginTop: 10 }}>Free for the pilot. No card required.</p>
+            <h2 style={{ color: "var(--warm-50)", fontSize: 30, letterSpacing: "-0.02em" }}>{t.ctaHeading}</h2>
+            <p style={{ color: "var(--warm-300)", fontSize: 16, marginTop: 10 }}>{t.ctaSubtext}</p>
           </div>
-          <Button variant="primary" size="lg" onClick={() => router.push("/register")} iconRight={<ArrowRight size={18} />}>Create your restaurant</Button>
+          <Button variant="primary" size="lg" onClick={() => router.push("/register")} iconRight={<ArrowRight size={18} />}>{t.createRestaurant}</Button>
         </div>
       </section>
 
@@ -165,9 +254,9 @@ export default function LandingPage() {
         <div style={{ maxWidth: 1120, margin: "0 auto", padding: "28px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
           <Logo />
           <div style={{ display: "flex", gap: 24, fontSize: 13, color: "var(--text-muted)" }}>
-            <a href="#" style={{ color: "inherit" }}>Terms</a>
-            <a href="#" style={{ color: "inherit" }}>Privacy</a>
-            <span>поръчка · &ldquo;order&rdquo; in Bulgarian</span>
+            <a href="#" style={{ color: "inherit" }}>{t.terms}</a>
+            <a href="#" style={{ color: "inherit" }}>{t.privacy}</a>
+            <span>{t.tagline}</span>
           </div>
         </div>
       </footer>

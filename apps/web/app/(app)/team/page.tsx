@@ -10,6 +10,7 @@ import { Badge } from "@/components/ds/Badge";
 import { Dialog } from "@/components/ds/Dialog";
 import { PageHead } from "@/components/ds/PageHead";
 import { api } from "@/lib/api";
+import { useTr, useCommon, useLang, type Lang } from "@/lib/i18n";
 
 type Role = "OWNER" | "MANAGER" | "STAFF";
 
@@ -26,11 +27,95 @@ interface LinkResponse {
   deepLink: string | null;
 }
 
-const ROLE_LABEL: Record<Role, string> = {
-  OWNER: "Owner",
-  MANAGER: "Manager",
-  STAFF: "Staff",
+const ROLE_LABEL: Record<Lang, Record<Role, string>> = {
+  en: { OWNER: "Owner", MANAGER: "Manager", STAFF: "Staff" },
+  bg: { OWNER: "Собственик", MANAGER: "Мениджър", STAFF: "Персонал" },
 };
+
+const M = {
+  en: {
+    title: "Team",
+    subtitle: "Who places orders, and how they're reached",
+    addPerson: "Add person",
+    loadFailed: "Failed to load team",
+    loadingTeam: "Loading team…",
+    emptyTitle: "No one on the team yet",
+    emptyDesc: "Add the people who place orders so they can receive reminders.",
+    telegramConnected: "Telegram connected",
+    telegramNotLinked: "Telegram not linked yet",
+    connectTelegram: "Connect Telegram",
+    unlink: "Unlink",
+    unlinkFailed: "Failed to unlink",
+    removeAria: (name: string) => `Remove ${name}`,
+    // Add person dialog
+    addDialogTitle: "Add a person",
+    addDialogDesc: "They'll receive reminders once you connect their Telegram.",
+    addFailed: "Failed to add person",
+    nameLabel: "Name",
+    namePlaceholder: "e.g. Georgi Iliev",
+    roleLabel: "Role",
+    roleStaff: "Staff",
+    roleManager: "Manager",
+    roleOwner: "Owner",
+    // Connect Telegram dialog
+    connectTitle: (name: string) => `Connect ${name} to Telegram`,
+    connectTitleFallback: "Connect to Telegram",
+    done: "Done",
+    connectInstructionA: (firstName: string) => `Ask ${firstName} to open this link in Telegram and tap`,
+    connectInstructionStart: "Start",
+    connectInstructionB: "— the bot links their chat automatically.",
+    them: "them",
+    creatingLink: "Creating link…",
+    createLinkFailed: "Failed to create link",
+    noBotConfigured: "The Telegram bot isn't configured yet, so there's no link to share.",
+    // Delete confirm dialog
+    deleteTitle: (name: string) => `Remove ${name}?`,
+    deleteTitleFallback: "Remove person?",
+    deleteDesc: "They'll stop receiving reminders. This can't be undone.",
+    removeFailed: "Failed to remove person",
+  },
+  bg: {
+    title: "Екип",
+    subtitle: "Кой прави поръчки и как се свързвате с него",
+    addPerson: "Добави човек",
+    loadFailed: "Неуспешно зареждане на екипа",
+    loadingTeam: "Зареждане на екипа…",
+    emptyTitle: "Все още няма никого в екипа",
+    emptyDesc: "Добавете хората, които правят поръчки, за да получават напомняния.",
+    telegramConnected: "Telegram е свързан",
+    telegramNotLinked: "Telegram все още не е свързан",
+    connectTelegram: "Свържи Telegram",
+    unlink: "Прекрати връзката",
+    unlinkFailed: "Неуспешно прекратяване на връзката",
+    removeAria: (name: string) => `Премахни ${name}`,
+    // Add person dialog
+    addDialogTitle: "Добавяне на човек",
+    addDialogDesc: "Ще получава напомняния, след като свържете неговия Telegram.",
+    addFailed: "Неуспешно добавяне на човек",
+    nameLabel: "Име",
+    namePlaceholder: "напр. Георги Илиев",
+    roleLabel: "Роля",
+    roleStaff: "Персонал",
+    roleManager: "Мениджър",
+    roleOwner: "Собственик",
+    // Connect Telegram dialog
+    connectTitle: (name: string) => `Свържи ${name} с Telegram`,
+    connectTitleFallback: "Свържи с Telegram",
+    done: "Готово",
+    connectInstructionA: (firstName: string) => `Помолете ${firstName} да отвори тази връзка в Telegram и да натисне`,
+    connectInstructionStart: "Старт",
+    connectInstructionB: "— ботът автоматично свързва неговия чат.",
+    them: "този човек",
+    creatingLink: "Създаване на връзка…",
+    createLinkFailed: "Неуспешно създаване на връзка",
+    noBotConfigured: "Telegram ботът все още не е настроен, затова няма връзка за споделяне.",
+    // Delete confirm dialog
+    deleteTitle: (name: string) => `Да премахнем ли ${name}?`,
+    deleteTitleFallback: "Да премахнем ли човека?",
+    deleteDesc: "Ще спре да получава напомняния. Това не може да бъде отменено.",
+    removeFailed: "Неуспешно премахване на човек",
+  },
+} as const;
 
 function initialsOf(name: string): string {
   return name
@@ -47,6 +132,10 @@ function firstNameOf(name: string): string {
 }
 
 export default function TeamPage() {
+  const t = useTr(M);
+  const c = useCommon();
+  const lang = useLang();
+  const roleLabel = ROLE_LABEL[lang];
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -77,7 +166,7 @@ export default function TeamPage() {
       const data = await api<Member[]>("/team");
       setMembers(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load team");
+      setError(e instanceof Error ? e.message : t.loadFailed);
     } finally {
       setLoading(false);
     }
@@ -107,7 +196,7 @@ export default function TeamPage() {
       setAddOpen(false);
       await load();
     } catch (e) {
-      setAddError(e instanceof Error ? e.message : "Failed to add person");
+      setAddError(e instanceof Error ? e.message : t.addFailed);
     } finally {
       setAddBusy(false);
     }
@@ -126,7 +215,7 @@ export default function TeamPage() {
       });
       setConnectLink(res);
     } catch (e) {
-      setConnectError(e instanceof Error ? e.message : "Failed to create link");
+      setConnectError(e instanceof Error ? e.message : t.createLinkFailed);
     } finally {
       setConnectLoading(false);
     }
@@ -157,7 +246,7 @@ export default function TeamPage() {
       await api(`/team/${member.id}/unlink`, { method: "POST" });
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to unlink");
+      setError(e instanceof Error ? e.message : t.unlinkFailed);
     }
   }
 
@@ -176,7 +265,7 @@ export default function TeamPage() {
       setDeleteTarget(null);
       await load();
     } catch (e) {
-      setDeleteError(e instanceof Error ? e.message : "Failed to remove person");
+      setDeleteError(e instanceof Error ? e.message : t.removeFailed);
     } finally {
       setDeleteBusy(false);
     }
@@ -185,11 +274,11 @@ export default function TeamPage() {
   return (
     <div style={{ padding: "32px 36px", maxWidth: 1120, margin: "0 auto" }}>
       <PageHead
-        title="Team"
-        subtitle="Who places orders, and how they're reached"
+        title={t.title}
+        subtitle={t.subtitle}
         action={
           <Button variant="primary" icon={<UserPlus size={16} />} onClick={openAdd}>
-            Add person
+            {t.addPerson}
           </Button>
         }
       />
@@ -212,7 +301,7 @@ export default function TeamPage() {
 
       {loading ? (
         <div style={{ padding: "40px 0", textAlign: "center", color: "var(--text-muted)", fontSize: 14 }}>
-          Loading team…
+          {t.loadingTeam}
         </div>
       ) : members.length === 0 ? (
         <div
@@ -228,13 +317,13 @@ export default function TeamPage() {
           }}
         >
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-strong)" }}>No one on the team yet</div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-strong)" }}>{t.emptyTitle}</div>
             <div style={{ fontSize: 13.5, color: "var(--text-muted)", marginTop: 2 }}>
-              Add the people who place orders so they can receive reminders.
+              {t.emptyDesc}
             </div>
           </div>
           <Button variant="primary" icon={<UserPlus size={16} />} onClick={openAdd}>
-            Add person
+            {t.addPerson}
           </Button>
         </div>
       ) : (
@@ -278,7 +367,7 @@ export default function TeamPage() {
                     <span style={{ fontSize: 15, fontWeight: 600, color: "var(--text-strong)", whiteSpace: "nowrap" }}>
                       {m.name}
                     </span>
-                    <Badge tone={m.role === "OWNER" ? "accent" : "neutral"}>{ROLE_LABEL[m.role]}</Badge>
+                    <Badge tone={m.role === "OWNER" ? "accent" : "neutral"}>{roleLabel[m.role]}</Badge>
                   </div>
                   <div
                     style={{
@@ -293,21 +382,21 @@ export default function TeamPage() {
                     <Send size={13} color="var(--brand-500)" />
                     {linked ? (
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                        Telegram connected <Check size={13} color="var(--green-500)" />
+                        {t.telegramConnected} <Check size={13} color="var(--green-500)" />
                       </span>
                     ) : (
-                      "Telegram not linked yet"
+                      t.telegramNotLinked
                     )}
                   </div>
                 </div>
 
                 {linked ? (
                   <Button variant="ghost" size="sm" icon={<X size={15} />} onClick={() => unlink(m)}>
-                    Unlink
+                    {t.unlink}
                   </Button>
                 ) : (
                   <Button variant="secondary" size="sm" icon={<Link2 size={15} />} onClick={() => openConnect(m)}>
-                    Connect Telegram
+                    {t.connectTelegram}
                   </Button>
                 )}
 
@@ -316,7 +405,7 @@ export default function TeamPage() {
                   size="sm"
                   icon={<Trash2 size={15} />}
                   style={{ color: "var(--red-500)" }}
-                  aria-label={`Remove ${m.name}`}
+                  aria-label={t.removeAria(m.name)}
                   onClick={() => openDelete(m)}
                 />
               </div>
@@ -328,33 +417,33 @@ export default function TeamPage() {
       {/* Add person dialog */}
       <Dialog
         open={addOpen}
-        title="Add a person"
-        description="They'll receive reminders once you connect their Telegram."
-        confirmLabel="Add person"
-        cancelLabel="Cancel"
+        title={t.addDialogTitle}
+        description={t.addDialogDesc}
+        confirmLabel={t.addPerson}
+        cancelLabel={c.cancel}
         confirmDisabled={!addName.trim()}
         busy={addBusy}
         onConfirm={confirmAdd}
         onCancel={() => setAddOpen(false)}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <Field label="Name" htmlFor="team-add-name" required error={addError ?? undefined}>
+          <Field label={t.nameLabel} htmlFor="team-add-name" required error={addError ?? undefined}>
             <Input
               id="team-add-name"
-              placeholder="e.g. Georgi Iliev"
+              placeholder={t.namePlaceholder}
               value={addName}
               onChange={(e) => setAddName(e.target.value)}
             />
           </Field>
-          <Field label="Role" htmlFor="team-add-role">
+          <Field label={t.roleLabel} htmlFor="team-add-role">
             <Select
               id="team-add-role"
               value={addRole}
               onChange={(e) => setAddRole(e.target.value as Role)}
             >
-              <option value="STAFF">Staff</option>
-              <option value="MANAGER">Manager</option>
-              <option value="OWNER">Owner</option>
+              <option value="STAFF">{t.roleStaff}</option>
+              <option value="MANAGER">{t.roleManager}</option>
+              <option value="OWNER">{t.roleOwner}</option>
             </Select>
           </Field>
         </div>
@@ -363,21 +452,21 @@ export default function TeamPage() {
       {/* Connect Telegram dialog */}
       <Dialog
         open={connectTarget !== null}
-        title={connectTarget ? `Connect ${connectTarget.name} to Telegram` : "Connect to Telegram"}
-        confirmLabel="Done"
-        cancelLabel="Close"
+        title={connectTarget ? t.connectTitle(connectTarget.name) : t.connectTitleFallback}
+        confirmLabel={t.done}
+        cancelLabel={c.close}
         width={440}
         onConfirm={closeConnect}
         onCancel={closeConnect}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <p style={{ fontSize: 14, color: "var(--text-body)", margin: 0, lineHeight: 1.6 }}>
-            Ask {connectTarget ? firstNameOf(connectTarget.name) : "them"} to open this link in Telegram and tap{" "}
-            <strong>Start</strong> — the bot links their chat automatically.
+            {t.connectInstructionA(connectTarget ? firstNameOf(connectTarget.name) : t.them)}{" "}
+            <strong>{t.connectInstructionStart}</strong> {t.connectInstructionB}
           </p>
 
           {connectLoading ? (
-            <div style={{ fontSize: 13.5, color: "var(--text-muted)", padding: "8px 0" }}>Creating link…</div>
+            <div style={{ fontSize: 13.5, color: "var(--text-muted)", padding: "8px 0" }}>{t.creatingLink}</div>
           ) : connectError ? (
             <div style={{ fontSize: 13.5, color: "var(--red-600)" }}>{connectError}</div>
           ) : connectLink?.deepLink ? (
@@ -412,12 +501,12 @@ export default function TeamPage() {
                 icon={copied ? <Check size={14} color="var(--green-500)" /> : <Copy size={14} />}
                 onClick={copyLink}
               >
-                {copied ? "Copied" : "Copy"}
+                {copied ? c.copied : c.copy}
               </Button>
             </div>
           ) : (
             <div style={{ fontSize: 13.5, color: "var(--text-muted)" }}>
-              The Telegram bot isn&apos;t configured yet, so there&apos;s no link to share.
+              {t.noBotConfigured}
             </div>
           )}
         </div>
@@ -427,10 +516,10 @@ export default function TeamPage() {
       <Dialog
         open={deleteTarget !== null}
         tone="danger"
-        title={deleteTarget ? `Remove ${deleteTarget.name}?` : "Remove person?"}
-        description="They'll stop receiving reminders. This can't be undone."
-        confirmLabel="Remove"
-        cancelLabel="Cancel"
+        title={deleteTarget ? t.deleteTitle(deleteTarget.name) : t.deleteTitleFallback}
+        description={t.deleteDesc}
+        confirmLabel={c.remove}
+        cancelLabel={c.cancel}
         busy={deleteBusy}
         onConfirm={confirmDelete}
         onCancel={() => setDeleteTarget(null)}
