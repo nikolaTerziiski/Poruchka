@@ -32,3 +32,6 @@ Thumbs.db
 # tooling artifacts
 .playwright-mcp/
 next-env.d.ts
+
+# design system import (reference; app-relevant parts copied into apps/web)
+_design-import/

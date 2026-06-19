@@ -1,0 +1,112 @@
+/* Poruchka — Color tokens
+ * Telegram-adjacent azure accent on a warm bone-paper neutral base.
+ * Deliberately moves off the scaffold's default indigo (#6366f1) — azure
+ * reinforces the product's Telegram bot connection without the "AI indigo" look.
+ * Single confident accent (azure); status uses distinct green/amber/red. */
+
+:root {
+  /* --- Brand: Azure (the single accent) — Telegram-adjacent --- */
+  --brand-50:  #e9f3fb;
+  --brand-100: #cde5f7;
+  --brand-200: #a3d0f0;
+  --brand-300: #6db4e6;
+  --brand-400: #3a96d8;
+  --brand-500: #1c7fc7; /* primary accent */
+  --brand-600: #1667a6;
+  --brand-700: #135286;
+  --brand-800: #103f66;
+  --brand-900: #0d2f4c;
+
+  /* --- Warm neutrals: bone / paper / espresso --- */
+  --warm-50:  #faf7f2; /* app/page background */
+  --warm-100: #f4efe7;
+  --warm-150: #ece5da;
+  --warm-200: #e4dccf;
+  --warm-300: #d6ccbb;
+  --warm-400: #b7ac9a;
+  --warm-500: #8c8273;
+  --warm-600: #6b6253;
+  --warm-700: #4e4639;
+  --warm-800: #332e25;
+  --warm-900: #221e18; /* ink */
+  --white:    #ffffff;
+
+  /* --- Status / semantic hues (distinct from azure accent) --- */
+  --green-50:  #e8f1ea;
+  --green-100: #d2e6d8;
+  --green-500: #2e7d58; /* confirmed / ordered / active */
+  --green-600: #266748;
+  --green-700: #1d4f37;
+
+  --amber-50:  #fbf1d8;
+  --amber-100: #f6e4b8;
+  --amber-500: #c2890f; /* pending / waiting / due */
+  --amber-600: #a0710b;
+  --amber-700: #7d5808;
+
+  --red-50:   #fae8e4;
+  --red-100:  #f4cfc8;
+  --red-500:  #b32a1c; /* escalated / destructive / error */
+  --red-600:  #971f13;
+  --red-700:  #76170d;
+
+  --blue-50:  #e8eef3;
+  --blue-500: #3a6b8a; /* info / links in prose / telegram-ish */
+  --blue-600: #2f5670;
+
+  /* ---------------------------------------------------------------
+   * Semantic aliases — reference these in components, not raw scales.
+   * ------------------------------------------------------------- */
+
+  /* Surfaces */
+  --surface-page:    var(--warm-50);
+  --surface-card:    var(--white);
+  --surface-sunken:  var(--warm-100);
+  --surface-inset:   var(--warm-150);
+  --surface-hover:   var(--warm-100);
+  --surface-inverse: var(--warm-900);
+
+  /* Text */
+  --text-strong:   var(--warm-900);
+  --text-body:     var(--warm-700);
+  --text-muted:    var(--warm-500);
+  --text-faint:    var(--warm-400);
+  --text-inverse:  var(--warm-50);
+  --text-on-accent: var(--white);
+  --text-link:     var(--brand-600);
+
+  /* Borders */
+  --border-subtle:  var(--warm-200);
+  --border-default: var(--warm-300);
+  --border-strong:  var(--warm-400);
+  --border-focus:   var(--brand-500);
+
+  /* Accent (primary action) */
+  --accent:         var(--brand-500);
+  --accent-hover:   var(--brand-600);
+  --accent-active:  var(--brand-700);
+  --accent-soft:    var(--brand-50);
+  --accent-soft-border: var(--brand-100);
+  --accent-text:    var(--brand-700);
+
+  /* Status — confirmed */
+  --status-confirmed-fg: var(--green-700);
+  --status-confirmed-bg: var(--green-50);
+  --status-confirmed-bd: var(--green-100);
+  --status-confirmed-dot: var(--green-500);
+
+  /* Status — pending / due */
+  --status-pending-fg: var(--amber-700);
+  --status-pending-bg: var(--amber-50);
+  --status-pending-bd: var(--amber-100);
+  --status-pending-dot: var(--amber-500);
+
+  /* Status — escalated */
+  --status-escalated-fg: var(--red-700);
+  --status-escalated-bg: var(--red-50);
+  --status-escalated-bd: var(--red-100);
+  --status-escalated-dot: var(--red-500);
+
+  /* Focus ring */
+  --ring: color-mix(in srgb, var(--brand-500) 28%, transparent);
+}

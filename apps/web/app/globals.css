@@ -1,29 +1,8 @@
+/* Tailwind kept transitionally for pages not yet migrated to the DS.
+ * Poruchka Design System tokens + base drive the new look. */
 @import "tailwindcss";
-
-@theme {
-  --color-brand-50: #eef2ff;
-  --color-brand-100: #e0e7ff;
-  --color-brand-500: #6366f1;
-  --color-brand-600: #4f46e5;
-  --color-brand-700: #4338ca;
-  --color-ink: #0f172a;
-  --color-muted: #64748b;
-}
-
-:root {
-  color-scheme: light;
-}
-
-html,
-body {
-  height: 100%;
-}
-
-body {
-  background: #f8fafc;
-  color: var(--color-ink);
-  -webkit-font-smoothing: antialiased;
-  font-family:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
-    Arial, sans-serif;
-}
+@import "./ds/fonts.css";
+@import "./ds/colors.css";
+@import "./ds/typography.css";
+@import "./ds/spacing.css";
+@import "./ds/base.css";

@@ -1,0 +1,10 @@
+/* Poruchka — Webfonts
+ * Loaded from Google Fonts CDN. The compiler reads @font-face from this
+ * closure; the remote @import below provides them.
+ *
+ * SUBSTITUTION NOTE: the source codebase ships NO webfonts (it used the
+ * system sans stack). These three faces are a deliberate brand choice, not
+ * copies of existing files. If you want them self-hosted, supply the .woff2
+ * files and we'll swap the @import for local @font-face rules. */
+
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
