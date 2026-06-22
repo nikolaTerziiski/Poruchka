@@ -5,6 +5,7 @@ import { PrismaService } from "../../prisma/prisma.service";
 export type TelegramReminderConfirmationResult =
   | { outcome: "confirmed"; language: string }
   | { outcome: "already_confirmed"; language: string }
+  | { outcome: "cancelled"; language: string }
   | { outcome: "not_found" }
   | { outcome: "unauthorized"; language?: string };
 
@@ -54,11 +55,17 @@ export class TelegramReminderConfirmationService {
       return { outcome: "already_confirmed", language: reminder.tenant.language };
     }
 
+    // Only live reminders are confirmable. Cancelled (or any future terminal)
+    // reminders must never be flipped to CONFIRMED, even with a stale button.
+    if (reminder.status === "CANCELLED") {
+      return { outcome: "cancelled", language: reminder.tenant.language };
+    }
+
     const updated = await this.prisma.reminderInstance.updateMany({
       where: {
         id: reminder.id,
         tenantId: actor.tenantId,
-        status: { not: "CONFIRMED" },
+        status: { in: ["PENDING", "ESCALATED"] },
       },
       data: {
         status: "CONFIRMED",

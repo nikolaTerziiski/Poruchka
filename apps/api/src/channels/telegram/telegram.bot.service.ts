@@ -8,6 +8,8 @@ import { Bot, Context } from "grammy";
 import { PrismaService } from "../../prisma/prisma.service";
 import {
   alreadyDoneToast,
+  cancelledToast,
+  chatAlreadyLinkedMessage,
   confirmedMessage,
   confirmToast,
   linkedMessage,
@@ -62,6 +64,21 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         await ctx.reply("This link is invalid or has already been used.");
         return;
       }
+      // A Telegram identity must map to at most one member per tenant, or
+      // confirmation authorization and audit attribution become ambiguous.
+      const alreadyLinked = await this.prisma.user.findFirst({
+        where: {
+          tenantId: user.tenantId,
+          chatChannel: "TELEGRAM",
+          chatUserId: chatId,
+          id: { not: user.id },
+        },
+        select: { id: true },
+      });
+      if (alreadyLinked) {
+        await ctx.reply(chatAlreadyLinkedMessage(user.tenant.language));
+        return;
+      }
       await this.prisma.user.update({
         where: { id: user.id },
         data: { chatUserId: chatId, chatChannel: "TELEGRAM", linkCode: null },
@@ -99,6 +116,15 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     }
     if (result.outcome === "already_confirmed") {
       await ctx.answerCallbackQuery({ text: alreadyDoneToast(result.language) });
+      return;
+    }
+    if (result.outcome === "cancelled") {
+      await ctx.answerCallbackQuery({ text: cancelledToast(result.language) });
+      try {
+        await ctx.editMessageReplyMarkup();
+      } catch {
+        /* message may be too old to edit */
+      }
       return;
     }
     await ctx.answerCallbackQuery({ text: confirmToast(result.language) });

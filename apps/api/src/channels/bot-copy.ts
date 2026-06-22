@@ -40,6 +40,18 @@ export function alreadyDoneToast(lang: string): string {
   return L(lang) === "bg" ? "Вече е отбелязано ✓" : "Already done ✓";
 }
 
+/** Popup shown when the order was cancelled and can no longer be confirmed. */
+export function cancelledToast(lang: string): string {
+  return L(lang) === "bg" ? "Поръчката е отменена" : "This order was cancelled";
+}
+
+/** Reply when a chat tries to link but is already connected to another member. */
+export function chatAlreadyLinkedMessage(lang: string): string {
+  return L(lang) === "bg"
+    ? "Този Telegram акаунт вече е свързан с друг член на екипа. Помолете собственика да го отвърже първо."
+    : "This Telegram account is already linked to another team member. Ask the owner to unlink it first.";
+}
+
 /** Reply after a staff member links their chat via the deep link. */
 export function linkedMessage(lang: string, name: string): string {
   return L(lang) === "bg"

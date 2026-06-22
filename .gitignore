@@ -7,6 +7,9 @@ dist/
 .next/
 out/
 *.tsbuildinfo
+# stray compiled output if a tsc run emits beside the TS sources
+packages/shared/src/*.js
+packages/shared/src/*.js.map
 
 # turbo
 .turbo/
@@ -31,6 +34,7 @@ Thumbs.db
 
 # tooling artifacts
 .playwright-mcp/
+.claude/playwright/
 next-env.d.ts
 
 # design system import (reference; app-relevant parts copied into apps/web)

@@ -48,7 +48,7 @@ describe("TelegramReminderConfirmationService", () => {
       select: { id: true, tenantId: true, role: true },
     });
     expect(prisma.reminderInstance.updateMany).toHaveBeenCalledWith({
-      where: { id: "reminder-a", tenantId: "tenant-a", status: { not: "CONFIRMED" } },
+      where: { id: "reminder-a", tenantId: "tenant-a", status: { in: ["PENDING", "ESCALATED"] } },
       data: {
         status: "CONFIRMED",
         confirmedAt: expect.any(Date),
@@ -133,6 +133,19 @@ describe("TelegramReminderConfirmationService", () => {
 
     await expect(service.confirm("reminder-a", "telegram-1")).resolves.toEqual({
       outcome: "already_confirmed",
+      language: "en",
+    });
+    expect(prisma.reminderInstance.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses to confirm a cancelled reminder", async () => {
+    reminderFindUnique.mockResolvedValue({
+      ...pendingReminder(),
+      status: "CANCELLED",
+    });
+
+    await expect(service.confirm("reminder-a", "telegram-1")).resolves.toEqual({
+      outcome: "cancelled",
       language: "en",
     });
     expect(prisma.reminderInstance.updateMany).not.toHaveBeenCalled();

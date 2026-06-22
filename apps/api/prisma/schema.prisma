@@ -70,7 +70,9 @@ model User {
   confirmedReminders ReminderInstance[] @relation("ConfirmedBy")
 
   @@index([tenantId])
-  @@index([tenantId, chatChannel, chatUserId])
+  // One chat identity maps to at most one member per tenant. NULL chatUserId
+  // rows stay distinct in Postgres, so unlinked members are unaffected.
+  @@unique([tenantId, chatChannel, chatUserId])
   @@map("users")
 }
 
