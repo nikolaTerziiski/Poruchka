@@ -1,6 +1,6 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { ItemsController } from "./items.controller";
-import { SchedulesController } from "./schedules.controller";
+import { OrderRulesController } from "./order-rules.controller";
 import { SuppliersController } from "./suppliers.controller";
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -47,31 +47,69 @@ describe("tenant-scoped resource mutations", () => {
     expect(prisma.item.create).not.toHaveBeenCalled();
   });
 
-  it("does not create a schedule for an assignee from another tenant", async () => {
+  it("does not create an order rule for an assignee from another tenant", async () => {
     const prisma = {
-      item: {
-        findFirst: jest.fn().mockResolvedValue({ id: "item-a" }),
+      supplier: {
+        findFirst: jest.fn().mockResolvedValue({ id: "supplier-a" }),
       },
       user: {
         findFirst: jest.fn().mockResolvedValue(null),
       },
-      schedule: {
+      item: {
+        findMany: jest.fn(),
+      },
+      orderRule: {
         create: jest.fn(),
       },
     } as unknown as PrismaService;
-    const controller = new SchedulesController(prisma);
+    const controller = new OrderRulesController(prisma);
 
     await expect(
       controller.create("tenant-a", {
-        itemId: "00000000-0000-0000-0000-000000000001",
+        supplierId: "00000000-0000-0000-0000-000000000001",
         assignedUserId: "00000000-0000-0000-0000-000000000003",
         reminderTimeOfDay: "09:00",
         recurrence: { type: "daily" },
+        lines: [{ itemId: "00000000-0000-0000-0000-000000000002" }],
       }),
     ).rejects.toThrow(BadRequestException);
     expect(prisma.user.findFirst).toHaveBeenCalledWith({
       where: { id: "00000000-0000-0000-0000-000000000003", tenantId: "tenant-a" },
+      select: { id: true },
     });
-    expect(prisma.schedule.create).not.toHaveBeenCalled();
+    expect(prisma.orderRule.create).not.toHaveBeenCalled();
+  });
+
+  it("does not accept order lines whose items belong to another supplier", async () => {
+    const prisma = {
+      supplier: {
+        findFirst: jest.fn().mockResolvedValue({ id: "supplier-a" }),
+      },
+      user: {
+        findFirst: jest.fn().mockResolvedValue({ id: "user-a" }),
+      },
+      item: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { id: "00000000-0000-0000-0000-000000000002", supplierId: "other-supplier" },
+          ]),
+      },
+      orderRule: {
+        create: jest.fn(),
+      },
+    } as unknown as PrismaService;
+    const controller = new OrderRulesController(prisma);
+
+    await expect(
+      controller.create("tenant-a", {
+        supplierId: "00000000-0000-0000-0000-000000000001",
+        assignedUserId: "00000000-0000-0000-0000-000000000003",
+        reminderTimeOfDay: "09:00",
+        recurrence: { type: "daily" },
+        lines: [{ itemId: "00000000-0000-0000-0000-000000000002" }],
+      }),
+    ).rejects.toThrow(BadRequestException);
+    expect(prisma.orderRule.create).not.toHaveBeenCalled();
   });
 });

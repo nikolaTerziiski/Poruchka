@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { ROLES_KEY } from "../auth/roles.decorator";
 import { ItemsController } from "./items.controller";
-import { SchedulesController } from "./schedules.controller";
+import { OrderRulesController } from "./order-rules.controller";
 import { SuppliersController } from "./suppliers.controller";
 import { TeamController } from "./team.controller";
 
@@ -32,9 +32,9 @@ describe("administrative mutation authorization metadata", () => {
     }
   });
 
-  it("allows owners and managers to manage schedules", () => {
+  it("allows owners and managers to manage order rules", () => {
     for (const method of ["create", "update", "remove"]) {
-      expect(rolesFor(SchedulesController, method)).toEqual(["OWNER", "MANAGER"]);
+      expect(rolesFor(OrderRulesController, method)).toEqual(["OWNER", "MANAGER"]);
     }
   });
 });

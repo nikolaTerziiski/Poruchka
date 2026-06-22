@@ -5,9 +5,9 @@ import { RolesGuard } from "../auth/roles.guard";
 import { MeController } from "./me.controller";
 import { SuppliersController } from "./suppliers.controller";
 import { ItemsController } from "./items.controller";
-import { SchedulesController } from "./schedules.controller";
+import { OrderRulesController } from "./order-rules.controller";
 import { TeamController } from "./team.controller";
-import { RemindersController } from "./reminders.controller";
+import { OrdersController } from "./orders.controller";
 
 @Module({
   imports: [ChannelsModule],
@@ -15,9 +15,9 @@ import { RemindersController } from "./reminders.controller";
     MeController,
     SuppliersController,
     ItemsController,
-    SchedulesController,
+    OrderRulesController,
     TeamController,
-    RemindersController,
+    OrdersController,
   ],
   providers: [SupabaseAuthGuard, RolesGuard],
 })

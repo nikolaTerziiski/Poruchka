@@ -4,7 +4,7 @@ import { Bot } from "grammy";
 import { NOTIFICATION_CHANNEL } from "./notification-channel.port";
 import { TelegramChannel } from "./telegram/telegram.channel";
 import { TelegramBotService } from "./telegram/telegram.bot.service";
-import { TelegramReminderConfirmationService } from "./telegram/telegram-reminder-confirmation.service";
+import { TelegramOrderActionService } from "./telegram/telegram-order-action.service";
 
 @Module({
   providers: [
@@ -18,7 +18,7 @@ import { TelegramReminderConfirmationService } from "./telegram/telegram-reminde
       inject: [ConfigService],
     },
     TelegramChannel,
-    TelegramReminderConfirmationService,
+    TelegramOrderActionService,
     { provide: NOTIFICATION_CHANNEL, useExisting: TelegramChannel },
     TelegramBotService,
   ],

@@ -7,13 +7,13 @@ export type Role = z.infer<typeof roleSchema>;
 export const chatChannelSchema = z.enum(["TELEGRAM", "VIBER", "WHATSAPP"]);
 export type ChatChannel = z.infer<typeof chatChannelSchema>;
 
-export const reminderStatusSchema = z.enum([
+export const orderRunStatusSchema = z.enum([
   "PENDING",
-  "CONFIRMED",
+  "SUBMITTED",
   "ESCALATED",
-  "CANCELLED",
+  "SKIPPED",
 ]);
-export type ReminderStatus = z.infer<typeof reminderStatusSchema>;
+export type OrderRunStatus = z.infer<typeof orderRunStatusSchema>;
 
 /** Local time of day in 24h "HH:mm" form. */
 export const timeOfDaySchema = z
@@ -41,10 +41,29 @@ export const createUserSchema = z.object({
 });
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 
-export const createScheduleSchema = z.object({
+/** One line of a supplier order: which item, how much by default. */
+export const orderRuleLineSchema = z.object({
   itemId: z.string().uuid(),
+  defaultQuantity: z.number().positive().optional(),
+  unit: z.string().optional(),
+  notes: z.string().optional(),
+  sortOrder: z.number().int().min(0).optional(),
+});
+export type OrderRuleLineInput = z.infer<typeof orderRuleLineSchema>;
+
+/**
+ * A recurring order to a single supplier — the whole basket is reminded as one
+ * message. `cutoffTime` is the local deadline to place it; orders are expected
+ * to arrive `expectedDeliveryOffsetDays` later.
+ */
+export const createOrderRuleSchema = z.object({
+  supplierId: z.string().uuid(),
   assignedUserId: z.string().uuid(),
+  escalationUserId: z.string().uuid().optional(),
   reminderTimeOfDay: timeOfDaySchema,
   recurrence: recurrenceSchema,
+  cutoffTime: timeOfDaySchema.optional(),
+  expectedDeliveryOffsetDays: z.number().int().min(0).optional(),
+  lines: z.array(orderRuleLineSchema).min(1),
 });
-export type CreateScheduleInput = z.infer<typeof createScheduleSchema>;
+export type CreateOrderRuleInput = z.infer<typeof createOrderRuleSchema>;

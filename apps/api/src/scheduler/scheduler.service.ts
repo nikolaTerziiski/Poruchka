@@ -4,17 +4,18 @@ import { DateTime } from "luxon";
 import type { Recurrence } from "@poruchka/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { NOTIFICATION_CHANNEL, NotificationChannel } from "../channels/notification-channel.port";
-import { confirmButtonLabel, reminderMessage } from "../channels/bot-copy";
+import { doneButtonLabel, orderReminderMessage, postponeButtonLabel } from "../channels/bot-copy";
 import { recurrenceMatchesDate } from "../reminders/recurrence";
 
 /**
- * The reminder engine. Each tick:
- *  1. materialize — create today's PENDING reminder instances for active
- *     schedules whose recurrence matches today (idempotent via the
- *     scheduleId+dueDate unique constraint).
- *  2. dispatch — send/re-nudge due PENDING reminders to the responsible
- *     person's chat, honoring quiet hours and the nudge cap (then escalate).
- * Confirmation (a tapped "Done") is handled in TelegramBotService.
+ * The order engine. Each tick:
+ *  1. materialize — create today's PENDING OrderRuns (with snapshotted lines)
+ *     for active OrderRules whose recurrence matches today (idempotent via the
+ *     orderRuleId+dueDate unique constraint).
+ *  2. dispatch — send/re-nudge due PENDING orders to the responsible person's
+ *     chat as a single per-supplier order sheet, honoring quiet hours and the
+ *     nudge cap (then escalate).
+ * Done/Postpone taps are handled in TelegramBotService + TelegramOrderActionService.
  */
 @Injectable()
 export class SchedulerService {
@@ -47,24 +48,55 @@ export class SchedulerService {
 
   private async materialize(): Promise<void> {
     const tenants = await this.prisma.tenant.findMany({
-      include: { schedules: { where: { active: true } } },
+      include: {
+        orderRules: {
+          where: { active: true },
+          include: { lines: { include: { item: true }, orderBy: { sortOrder: "asc" } } },
+        },
+      },
     });
     for (const tenant of tenants) {
       const today = DateTime.now().setZone(tenant.timezone).startOf("day");
-      for (const s of tenant.schedules) {
-        const rec = s.recurrence as unknown as Recurrence;
+      for (const rule of tenant.orderRules) {
+        if (rule.lines.length === 0) continue; // nothing to order
+        const rec = rule.recurrence as unknown as Recurrence;
         if (!recurrenceMatchesDate(rec, today)) continue;
-        const [hh, mm] = s.reminderTimeOfDay.split(":").map((n) => parseInt(n, 10));
+
+        const dueDate = this.utcDateOf(today);
+        const exists = await this.prisma.orderRun.findUnique({
+          where: { orderRuleId_dueDate: { orderRuleId: rule.id, dueDate } },
+          select: { id: true },
+        });
+        if (exists) continue;
+
+        const [hh, mm] = rule.reminderTimeOfDay.split(":").map((n) => parseInt(n, 10));
         const dueAt = today.set({ hour: hh, minute: mm, second: 0, millisecond: 0 });
-        await this.prisma.reminderInstance.upsert({
-          where: { scheduleId_dueDate: { scheduleId: s.id, dueDate: this.utcDateOf(today) } },
-          update: {},
-          create: {
+        const expectedDeliveryDate =
+          rule.expectedDeliveryOffsetDays != null
+            ? this.utcDateOf(today.plus({ days: rule.expectedDeliveryOffsetDays }))
+            : null;
+
+        await this.prisma.orderRun.create({
+          data: {
             tenantId: tenant.id,
-            scheduleId: s.id,
-            dueDate: this.utcDateOf(today),
+            orderRuleId: rule.id,
+            supplierId: rule.supplierId,
+            assignedUserId: rule.assignedUserId,
+            dueDate,
+            dueAt: dueAt.toJSDate(),
+            expectedDeliveryDate,
             status: "PENDING",
             nextNudgeAt: dueAt.toJSDate(),
+            lines: {
+              create: rule.lines.map((l, i) => ({
+                itemId: l.itemId,
+                itemNameSnapshot: l.item.name,
+                quantitySnapshot: l.defaultQuantity ?? null,
+                unitSnapshot: l.unit ?? l.item.unit ?? null,
+                notesSnapshot: l.notes ?? l.item.notes ?? null,
+                sortOrder: l.sortOrder ?? i,
+              })),
+            },
           },
         });
       }
@@ -73,58 +105,70 @@ export class SchedulerService {
 
   private async dispatch(): Promise<void> {
     const now = new Date();
-    const due = await this.prisma.reminderInstance.findMany({
+    const due = await this.prisma.orderRun.findMany({
       where: { status: "PENDING", nextNudgeAt: { lte: now } },
       include: {
         tenant: true,
-        schedule: { include: { item: { include: { supplier: true } }, assignedUser: true } },
+        supplier: true,
+        assignedUser: true,
+        lines: { orderBy: { sortOrder: "asc" } },
+        orderRule: { select: { cutoffTime: true } },
       },
     });
 
-    for (const r of due) {
-      const t = r.tenant;
+    for (const run of due) {
+      const t = run.tenant;
       const nowLocal = DateTime.now().setZone(t.timezone);
 
       // Quiet hours → defer to the next allowed time, don't send.
       if (this.inQuietHours(nowLocal.hour, t.quietHoursStart, t.quietHoursEnd)) {
-        await this.prisma.reminderInstance.update({
-          where: { id: r.id },
+        await this.prisma.orderRun.update({
+          where: { id: run.id },
           data: { nextNudgeAt: this.nextAllowed(nowLocal, t.quietHoursEnd).toJSDate() },
         });
         continue;
       }
 
-      const user = r.schedule.assignedUser;
+      const user = run.assignedUser;
       if (!user.chatUserId) {
-        this.logger.warn(`Reminder ${r.id}: assignee has no linked chat — deferring`);
-        await this.prisma.reminderInstance.update({
-          where: { id: r.id },
+        this.logger.warn(`OrderRun ${run.id}: assignee has no linked chat — deferring`);
+        await this.prisma.orderRun.update({
+          where: { id: run.id },
           data: { nextNudgeAt: nowLocal.plus({ minutes: t.renudgeIntervalMin }).toJSDate() },
         });
         continue;
       }
 
-      const text = reminderMessage(t.language, {
-        item: r.schedule.item.name,
-        supplier: r.schedule.item.supplier.name,
-        unit: r.schedule.item.unit,
-        note: r.schedule.item.notes,
+      const text = orderReminderMessage(t.language, {
+        supplier: run.supplier.name,
+        cutoffTime: run.orderRule.cutoffTime,
+        lines: run.lines.map((l) => ({
+          name: l.itemNameSnapshot,
+          quantity: l.quantitySnapshot,
+          unit: l.unitSnapshot,
+          note: l.notesSnapshot,
+        })),
       });
       try {
         await this.channel.send({
           chatUserId: user.chatUserId,
           text,
-          buttons: [{ label: confirmButtonLabel(t.language), payload: `confirm:${r.id}` }],
+          buttons: [
+            { label: doneButtonLabel(t.language), payload: `order:done:${run.id}` },
+            { label: postponeButtonLabel(t.language), payload: `order:snooze:${run.id}` },
+          ],
         });
       } catch (e) {
-        this.logger.error(`send failed for reminder ${r.id}: ${e instanceof Error ? e.message : String(e)}`);
+        this.logger.error(
+          `send failed for order ${run.id}: ${e instanceof Error ? e.message : String(e)}`,
+        );
         continue;
       }
 
-      const sentCount = r.sentCount + 1;
+      const sentCount = run.sentCount + 1;
       const escalate = sentCount >= t.maxNudges;
-      await this.prisma.reminderInstance.update({
-        where: { id: r.id },
+      await this.prisma.orderRun.update({
+        where: { id: run.id },
         data: {
           sentCount,
           lastSentAt: now,
@@ -133,7 +177,7 @@ export class SchedulerService {
         },
       });
       this.logger.log(
-        `Reminder ${r.id} (${r.schedule.item.name}) sent to ${user.name}${escalate ? " — escalated" : ` (nudge ${sentCount}/${t.maxNudges})`}`,
+        `OrderRun ${run.id} (${run.supplier.name}, ${run.lines.length} items) sent to ${user.name}${escalate ? " — escalated" : ` (nudge ${sentCount}/${t.maxNudges})`}`,
       );
     }
   }

@@ -23,11 +23,11 @@ enum ChatChannel {
   WHATSAPP
 }
 
-enum ReminderStatus {
+enum OrderRunStatus {
   PENDING
-  CONFIRMED
+  SUBMITTED
   ESCALATED
-  CANCELLED
+  SKIPPED
 }
 
 /// A restaurant. Top-level tenant; everything else is scoped to it.
@@ -43,12 +43,12 @@ model Tenant {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  users     User[]
-  suppliers Supplier[]
-  items     Item[]
-  schedules Schedule[]
-  reminders ReminderInstance[]
-  messages  MessageLog[]
+  users      User[]
+  suppliers  Supplier[]
+  items      Item[]
+  orderRules OrderRule[]
+  orderRuns  OrderRun[]
+  messages   MessageLog[]
 
   @@map("tenants")
 }
@@ -66,8 +66,10 @@ model User {
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
 
-  schedules          Schedule[]
-  confirmedReminders ReminderInstance[] @relation("ConfirmedBy")
+  orderRulesAssigned   OrderRule[] @relation("OrderRuleAssignee")
+  orderRulesEscalation OrderRule[] @relation("OrderRuleEscalation")
+  orderRunsAssigned    OrderRun[]  @relation("OrderRunAssignee")
+  orderRunsSubmitted   OrderRun[]  @relation("OrderRunSubmittedBy")
 
   @@index([tenantId])
   // One chat identity maps to at most one member per tenant. NULL chatUserId
@@ -85,7 +87,9 @@ model Supplier {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  items Item[]
+  items      Item[]
+  orderRules OrderRule[]
+  orderRuns  OrderRun[]
 
   @@index([tenantId])
   @@map("suppliers")
@@ -103,57 +107,110 @@ model Item {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  schedules Schedule[]
+  orderRuleLines OrderRuleLine[]
+  orderRunLines  OrderRunLine[]
 
   @@index([tenantId])
   @@index([supplierId])
   @@map("items")
 }
 
-/// When and how often an item must be ordered, and who is responsible.
-model Schedule {
-  id                String   @id @default(uuid()) @db.Uuid
-  tenantId          String   @db.Uuid
-  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  itemId            String   @db.Uuid
-  item              Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  assignedUserId    String   @db.Uuid
-  assignedUser      User     @relation(fields: [assignedUserId], references: [id], onDelete: Restrict)
-  reminderTimeOfDay String // "HH:mm" in the tenant's timezone
-  recurrence        Json // discriminated union, validated by zod in the app layer
-  active            Boolean  @default(true)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+/// A recurring order to one supplier: the whole basket is reminded as a single
+/// message. Lines hold the items + default quantities.
+model OrderRule {
+  id                         String   @id @default(uuid()) @db.Uuid
+  tenantId                   String   @db.Uuid
+  tenant                     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  supplierId                 String   @db.Uuid
+  supplier                   Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  assignedUserId             String   @db.Uuid
+  assignedUser               User     @relation("OrderRuleAssignee", fields: [assignedUserId], references: [id], onDelete: Restrict)
+  escalationUserId           String?  @db.Uuid
+  escalationUser             User?    @relation("OrderRuleEscalation", fields: [escalationUserId], references: [id], onDelete: SetNull)
+  reminderTimeOfDay          String // "HH:mm" in the tenant's timezone
+  recurrence                 Json // discriminated union, validated by zod in the app layer
+  cutoffTime                 String? // local "HH:mm" deadline to place the order
+  expectedDeliveryOffsetDays Int? // delivery lands this many days after the order
+  active                     Boolean  @default(true)
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
 
-  reminders ReminderInstance[]
+  lines OrderRuleLine[]
+  runs  OrderRun[]
 
   @@index([tenantId])
-  @@index([itemId])
-  @@map("schedules")
+  @@index([supplierId])
+  @@map("order_rules")
 }
 
-/// A concrete occurrence for one day. The scheduler drives this; the calendar reads it.
-model ReminderInstance {
-  id                String         @id @default(uuid()) @db.Uuid
-  tenantId          String         @db.Uuid
-  tenant            Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  scheduleId        String         @db.Uuid
-  schedule          Schedule       @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
-  dueDate           DateTime       @db.Date
-  status            ReminderStatus @default(PENDING)
-  sentCount         Int            @default(0)
-  lastSentAt        DateTime?
-  nextNudgeAt       DateTime?
-  confirmedAt       DateTime?
-  confirmedByUserId String?        @db.Uuid
-  confirmedByUser   User?          @relation("ConfirmedBy", fields: [confirmedByUserId], references: [id])
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
+/// One item on an order rule, with the quantity normally ordered.
+model OrderRuleLine {
+  id              String    @id @default(uuid()) @db.Uuid
+  orderRuleId     String    @db.Uuid
+  orderRule       OrderRule @relation(fields: [orderRuleId], references: [id], onDelete: Cascade)
+  itemId          String    @db.Uuid
+  item            Item      @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  defaultQuantity Float?
+  unit            String?
+  notes           String?
+  sortOrder       Int       @default(0)
 
-  @@unique([scheduleId, dueDate]) // makes materialization idempotent
+  @@index([orderRuleId])
+  @@map("order_rule_lines")
+}
+
+/// A concrete order occurrence for one day. The scheduler drives this; the
+/// calendar reads it. Lines are snapshotted so history stays stable.
+model OrderRun {
+  id                   String         @id @default(uuid()) @db.Uuid
+  tenantId             String         @db.Uuid
+  tenant               Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orderRuleId          String         @db.Uuid
+  orderRule            OrderRule      @relation(fields: [orderRuleId], references: [id], onDelete: Cascade)
+  supplierId           String         @db.Uuid
+  supplier             Supplier       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  assignedUserId       String         @db.Uuid
+  assignedUser         User           @relation("OrderRunAssignee", fields: [assignedUserId], references: [id], onDelete: Restrict)
+  dueDate              DateTime       @db.Date
+  dueAt                DateTime
+  expectedDeliveryDate DateTime?      @db.Date
+  status               OrderRunStatus @default(PENDING)
+  sentCount            Int            @default(0)
+  lastSentAt           DateTime?
+  nextNudgeAt          DateTime?
+  postponedCount       Int            @default(0)
+  lastPostponedAt      DateTime?
+  postponedUntil       DateTime?
+  submittedAt          DateTime?
+  submittedByUserId    String?        @db.Uuid
+  submittedByUser      User?          @relation("OrderRunSubmittedBy", fields: [submittedByUserId], references: [id], onDelete: SetNull)
+  skipReason           String?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  lines OrderRunLine[]
+
+  @@unique([orderRuleId, dueDate]) // makes materialization idempotent
   @@index([tenantId])
   @@index([status, nextNudgeAt])
-  @@map("reminder_instances")
+  @@map("order_runs")
+}
+
+/// A snapshotted line of a concrete order run.
+model OrderRunLine {
+  id               String   @id @default(uuid()) @db.Uuid
+  orderRunId       String   @db.Uuid
+  orderRun         OrderRun @relation(fields: [orderRunId], references: [id], onDelete: Cascade)
+  itemId           String   @db.Uuid
+  item             Item     @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  itemNameSnapshot String
+  quantitySnapshot Float?
+  unitSnapshot     String?
+  notesSnapshot    String?
+  sortOrder        Int      @default(0)
+
+  @@index([orderRunId])
+  @@map("order_run_lines")
 }
 
 /// Audit trail of inbound/outbound chat messages, for debugging.

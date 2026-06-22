@@ -6,22 +6,64 @@ function L(lang: string | null | undefined): Lang {
   return lang === "en" ? "en" : "bg"; // default Bulgarian
 }
 
-/** The detailed daily order reminder. */
-export function reminderMessage(
-  lang: string,
-  p: { item: string; supplier: string; unit?: string | null; note?: string | null },
-): string {
-  const unitPart = p.unit ? ` (${p.unit})` : "";
-  const notePart = p.note && p.note.trim() ? `📝 ${p.note.trim()}\n` : "";
-  if (L(lang) === "bg") {
-    return `🛒 Време е за поръчка днес:\n• ${p.item}${unitPart} — от ${p.supplier}\n${notePart}Натиснете „Готово“, след като я подадете.`;
-  }
-  return `🛒 Time to order today:\n• ${p.item}${unitPart} — from ${p.supplier}\n${notePart}Tap “Done” once you've placed the order.`;
+export interface OrderLineCopy {
+  name: string;
+  quantity?: number | null;
+  unit?: string | null;
+  note?: string | null;
 }
 
-/** Label on the confirm button. */
-export function confirmButtonLabel(lang: string): string {
+/** One line of the order sheet, e.g. "• Pork Meat — 10 kg  📝 lean". */
+function formatLine(l: OrderLineCopy): string {
+  const qty =
+    l.quantity != null
+      ? ` — ${l.quantity}${l.unit ? ` ${l.unit}` : ""}`
+      : l.unit
+        ? ` — ${l.unit}`
+        : "";
+  const note = l.note && l.note.trim() ? `  📝 ${l.note.trim()}` : "";
+  return `• ${l.name}${qty}${note}`;
+}
+
+/** The detailed daily order reminder for a whole supplier basket. */
+export function orderReminderMessage(
+  lang: string,
+  p: { supplier: string; lines: OrderLineCopy[]; cutoffTime?: string | null },
+): string {
+  const lines = p.lines.map(formatLine).join("\n");
+  if (L(lang) === "bg") {
+    const cutoff = p.cutoffTime ? `\n⏳ Подайте до ${p.cutoffTime}.` : "";
+    return `🛒 Време е за поръчка от ${p.supplier}:\n${lines}${cutoff}\nНатиснете „Готово“, след като я подадете.`;
+  }
+  const cutoff = p.cutoffTime ? `\n⏳ Place it by ${p.cutoffTime}.` : "";
+  return `🛒 Time to order from ${p.supplier}:\n${lines}${cutoff}\nTap “Done” once you've placed the order.`;
+}
+
+/** Label on the Done button. */
+export function doneButtonLabel(lang: string): string {
   return L(lang) === "bg" ? "✅ Готово" : "✅ Done";
+}
+
+/** Label on the Postpone button. */
+export function postponeButtonLabel(lang: string): string {
+  return L(lang) === "bg" ? "⏰ Отложи" : "⏰ Postpone";
+}
+
+export type SnoozeChoice = "1h" | "tonight" | "tomorrow";
+
+export const SNOOZE_CHOICES: SnoozeChoice[] = ["1h", "tonight", "tomorrow"];
+
+/** Labels for the snooze options shown after tapping Postpone. */
+export function snoozeOptionLabel(lang: string, choice: SnoozeChoice): string {
+  const bg = L(lang) === "bg";
+  switch (choice) {
+    case "1h":
+      return bg ? "След 1 час" : "In 1 hour";
+    case "tonight":
+      return bg ? "Довечера" : "Tonight";
+    case "tomorrow":
+      return bg ? "Утре" : "Tomorrow";
+  }
 }
 
 /** Chat message sent after the order is confirmed. */
@@ -31,7 +73,7 @@ export function confirmedMessage(lang: string): string {
     : "✅ Successfully submitted as Ordered — you can check the rest in the app.";
 }
 
-/** Short popup shown on the tapped button. */
+/** Short popup shown on the tapped Done button. */
 export function confirmToast(lang: string): string {
   return L(lang) === "bg" ? "Готово ✓" : "Done ✓";
 }
@@ -40,16 +82,16 @@ export function alreadyDoneToast(lang: string): string {
   return L(lang) === "bg" ? "Вече е отбелязано ✓" : "Already done ✓";
 }
 
-/** Popup shown when the order was cancelled and can no longer be confirmed. */
-export function cancelledToast(lang: string): string {
-  return L(lang) === "bg" ? "Поръчката е отменена" : "This order was cancelled";
+/** Popup shown when the order was skipped and can no longer be confirmed. */
+export function skippedToast(lang: string): string {
+  return L(lang) === "bg" ? "Поръчката е пропусната" : "This order was skipped";
 }
 
-/** Reply when a chat tries to link but is already connected to another member. */
-export function chatAlreadyLinkedMessage(lang: string): string {
+/** Popup confirming a postponement, e.g. "Postponed: Tomorrow". */
+export function snoozedToast(lang: string, choice: SnoozeChoice): string {
   return L(lang) === "bg"
-    ? "Този Telegram акаунт вече е свързан с друг член на екипа. Помолете собственика да го отвърже първо."
-    : "This Telegram account is already linked to another team member. Ask the owner to unlink it first.";
+    ? `Отложено: ${snoozeOptionLabel(lang, choice)}`
+    : `Postponed: ${snoozeOptionLabel(lang, choice)}`;
 }
 
 /** Reply after a staff member links their chat via the deep link. */
@@ -57,4 +99,11 @@ export function linkedMessage(lang: string, name: string): string {
   return L(lang) === "bg"
     ? `✅ Свързано, ${name}. Тук ще получавате напомнянията за поръчки.`
     : `✅ Connected, ${name}. You'll receive your ordering reminders here.`;
+}
+
+/** Reply when a chat tries to link but is already connected to another member. */
+export function chatAlreadyLinkedMessage(lang: string): string {
+  return L(lang) === "bg"
+    ? "Този Telegram акаунт вече е свързан с друг член на екипа. Помолете собственика да го отвърже първо."
+    : "This Telegram account is already linked to another team member. Ask the owner to unlink it first.";
 }

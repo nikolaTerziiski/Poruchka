@@ -8,19 +8,23 @@ import { Bot, Context } from "grammy";
 import { PrismaService } from "../../prisma/prisma.service";
 import {
   alreadyDoneToast,
-  cancelledToast,
   chatAlreadyLinkedMessage,
   confirmedMessage,
   confirmToast,
   linkedMessage,
+  skippedToast,
+  snoozedToast,
+  snoozeOptionLabel,
+  SNOOZE_CHOICES,
+  type SnoozeChoice,
 } from "../bot-copy";
-import { TelegramReminderConfirmationService } from "./telegram-reminder-confirmation.service";
+import { TelegramOrderActionService } from "./telegram-order-action.service";
 
 /**
  * Owns the grammY Bot: starts long polling (no public webhook needed for the
  * pilot) and handles two inbound events:
  *  - /start <code>  → link this Telegram chat to a Poruchka user
- *  - callback_query → a tapped "Done" button confirms a reminder
+ *  - callback_query → Done / Postpone taps on an order reminder
  */
 @Injectable()
 export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
@@ -29,7 +33,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly bot: Bot,
     private readonly prisma: PrismaService,
-    private readonly confirmationService: TelegramReminderConfirmationService,
+    private readonly orderActions: TelegramOrderActionService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -65,7 +69,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         return;
       }
       // A Telegram identity must map to at most one member per tenant, or
-      // confirmation authorization and audit attribution become ambiguous.
+      // order authorization and audit attribution become ambiguous.
       const alreadyLinked = await this.prisma.user.findFirst({
         where: {
           tenantId: user.tenantId,
@@ -89,7 +93,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
     this.bot.on("callback_query:data", async (ctx) => {
       const data = ctx.callbackQuery.data;
-      if (data === "confirm:test") {
+      if (data === "order:test" || data === "confirm:test") {
         await ctx.answerCallbackQuery({ text: "Test confirmed ✓" });
         try {
           await ctx.editMessageReplyMarkup();
@@ -98,45 +102,99 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         }
         return;
       }
-      if (data.startsWith("confirm:")) {
-        await this.confirmReminder(data.slice("confirm:".length), ctx);
-        return;
+
+      const [ns, action, runId, choice] = data.split(":");
+      if (ns === "order" && runId) {
+        if (action === "done") {
+          await this.handleDone(runId, ctx);
+          return;
+        }
+        if (action === "snooze") {
+          if (choice) await this.handleSnooze(runId, choice as SnoozeChoice, ctx);
+          else await this.openSnoozeMenu(runId, ctx);
+          return;
+        }
       }
       await ctx.answerCallbackQuery();
     });
   }
 
-  private async confirmReminder(reminderId: string, ctx: Context): Promise<void> {
-    const telegramUserId =
-      ctx.from?.id !== undefined ? String(ctx.from.id) : ctx.chat?.id !== undefined ? String(ctx.chat.id) : undefined;
-    const result = await this.confirmationService.confirm(reminderId, telegramUserId);
+  /** "Done" tap → submit the order. */
+  private async handleDone(runId: string, ctx: Context): Promise<void> {
+    const result = await this.orderActions.submit(runId, this.telegramUserId(ctx));
     if (result.outcome === "not_found" || result.outcome === "unauthorized") {
       await ctx.answerCallbackQuery();
       return;
     }
-    if (result.outcome === "already_confirmed") {
+    if (result.outcome === "already_submitted") {
       await ctx.answerCallbackQuery({ text: alreadyDoneToast(result.language) });
       return;
     }
-    if (result.outcome === "cancelled") {
-      await ctx.answerCallbackQuery({ text: cancelledToast(result.language) });
-      try {
-        await ctx.editMessageReplyMarkup();
-      } catch {
-        /* message may be too old to edit */
-      }
+    if (result.outcome === "skipped") {
+      await ctx.answerCallbackQuery({ text: skippedToast(result.language) });
+      await this.clearButtons(ctx);
       return;
     }
     await ctx.answerCallbackQuery({ text: confirmToast(result.language) });
-    try {
-      await ctx.editMessageReplyMarkup();
-    } catch {
-      /* ignore */
-    }
+    await this.clearButtons(ctx);
     try {
       await ctx.reply(confirmedMessage(result.language));
     } catch {
       /* ignore */
     }
+  }
+
+  /** "Postpone" tap → swap the keyboard for the snooze choices. */
+  private async openSnoozeMenu(runId: string, ctx: Context): Promise<void> {
+    const run = await this.prisma.orderRun.findUnique({
+      where: { id: runId },
+      select: { tenant: { select: { language: true } } },
+    });
+    const lang = run?.tenant.language ?? "bg";
+    const row = SNOOZE_CHOICES.map((c) => ({
+      text: snoozeOptionLabel(lang, c),
+      callback_data: `order:snooze:${runId}:${c}`,
+    }));
+    try {
+      await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [row] } });
+    } catch {
+      /* message may be too old to edit */
+    }
+    await ctx.answerCallbackQuery();
+  }
+
+  /** A snooze choice tap → postpone the order. */
+  private async handleSnooze(runId: string, choice: SnoozeChoice, ctx: Context): Promise<void> {
+    const result = await this.orderActions.postpone(runId, this.telegramUserId(ctx), choice);
+    if (result.outcome === "not_found" || result.outcome === "unauthorized") {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+    if (result.outcome === "already_submitted") {
+      await ctx.answerCallbackQuery({ text: alreadyDoneToast(result.language) });
+      await this.clearButtons(ctx);
+      return;
+    }
+    if (result.outcome === "skipped") {
+      await ctx.answerCallbackQuery({ text: skippedToast(result.language) });
+      await this.clearButtons(ctx);
+      return;
+    }
+    await ctx.answerCallbackQuery({ text: snoozedToast(result.language, choice) });
+    await this.clearButtons(ctx);
+  }
+
+  private async clearButtons(ctx: Context): Promise<void> {
+    try {
+      await ctx.editMessageReplyMarkup();
+    } catch {
+      /* message may be too old to edit */
+    }
+  }
+
+  private telegramUserId(ctx: Context): string | undefined {
+    if (ctx.from?.id !== undefined) return String(ctx.from.id);
+    if (ctx.chat?.id !== undefined) return String(ctx.chat.id);
+    return undefined;
   }
 }
