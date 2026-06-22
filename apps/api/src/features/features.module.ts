@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ChannelsModule } from "../channels/channels.module";
 import { SupabaseAuthGuard } from "../auth/supabase-auth.guard";
+import { RolesGuard } from "../auth/roles.guard";
 import { MeController } from "./me.controller";
 import { SuppliersController } from "./suppliers.controller";
 import { ItemsController } from "./items.controller";
@@ -18,6 +19,6 @@ import { RemindersController } from "./reminders.controller";
     TeamController,
     RemindersController,
   ],
-  providers: [SupabaseAuthGuard],
+  providers: [SupabaseAuthGuard, RolesGuard],
 })
 export class FeaturesModule {}

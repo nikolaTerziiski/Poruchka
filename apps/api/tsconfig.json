@@ -8,6 +8,9 @@
     "target": "ES2021",
     "outDir": "./dist",
     "baseUrl": "./",
+    "paths": {
+      "@poruchka/shared": ["../../packages/shared/src"]
+    },
     "sourceMap": true,
     "strictPropertyInitialization": false
   },

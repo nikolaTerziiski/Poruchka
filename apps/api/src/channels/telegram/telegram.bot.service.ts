@@ -12,6 +12,7 @@ import {
   confirmToast,
   linkedMessage,
 } from "../bot-copy";
+import { TelegramReminderConfirmationService } from "./telegram-reminder-confirmation.service";
 
 /**
  * Owns the grammY Bot: starts long polling (no public webhook needed for the
@@ -26,6 +27,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly bot: Bot,
     private readonly prisma: PrismaService,
+    private readonly confirmationService: TelegramReminderConfirmationService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -88,40 +90,25 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async confirmReminder(reminderId: string, ctx: Context): Promise<void> {
-    const chatId = String(ctx.chat?.id ?? ctx.from?.id);
-    const reminder = await this.prisma.reminderInstance.findUnique({
-      where: { id: reminderId },
-      include: { tenant: true },
-    });
-    if (!reminder) {
+    const telegramUserId =
+      ctx.from?.id !== undefined ? String(ctx.from.id) : ctx.chat?.id !== undefined ? String(ctx.chat.id) : undefined;
+    const result = await this.confirmationService.confirm(reminderId, telegramUserId);
+    if (result.outcome === "not_found" || result.outcome === "unauthorized") {
       await ctx.answerCallbackQuery();
       return;
     }
-    const lang = reminder.tenant.language;
-    if (reminder.status === "CONFIRMED") {
-      await ctx.answerCallbackQuery({ text: alreadyDoneToast(lang) });
+    if (result.outcome === "already_confirmed") {
+      await ctx.answerCallbackQuery({ text: alreadyDoneToast(result.language) });
       return;
     }
-    const user = await this.prisma.user.findFirst({
-      where: { chatUserId: chatId },
-    });
-    await this.prisma.reminderInstance.update({
-      where: { id: reminderId },
-      data: {
-        status: "CONFIRMED",
-        confirmedAt: new Date(),
-        confirmedByUserId: user?.id ?? null,
-        nextNudgeAt: null,
-      },
-    });
-    await ctx.answerCallbackQuery({ text: confirmToast(lang) });
+    await ctx.answerCallbackQuery({ text: confirmToast(result.language) });
     try {
       await ctx.editMessageReplyMarkup();
     } catch {
       /* ignore */
     }
     try {
-      await ctx.reply(confirmedMessage(lang));
+      await ctx.reply(confirmedMessage(result.language));
     } catch {
       /* ignore */
     }

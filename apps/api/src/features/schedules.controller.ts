@@ -1,9 +1,10 @@
 import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, UseGuards } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
 import { createScheduleSchema } from "@poruchka/shared";
 import { z } from "zod";
 import { SupabaseAuthGuard } from "../auth/supabase-auth.guard";
 import { TenantId } from "../auth/request-context";
+import { Roles } from "../auth/roles.decorator";
+import { RolesGuard } from "../auth/roles.guard";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -11,7 +12,19 @@ const updateScheduleSchema = createScheduleSchema.partial().extend({
   active: z.boolean().optional(),
 });
 
-@UseGuards(SupabaseAuthGuard)
+type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];
+type JsonObject = { [key: string]: JsonValue };
+type JsonInput = JsonObject | JsonValue[];
+
+type ScheduleUpdateData = {
+  reminderTimeOfDay?: string;
+  active?: boolean;
+  recurrence?: JsonInput;
+  item?: { connect: { id: string } };
+  assignedUser?: { connect: { id: string } };
+};
+
+@UseGuards(SupabaseAuthGuard, RolesGuard)
 @Controller("schedules")
 export class SchedulesController {
   constructor(private readonly prisma: PrismaService) {}
@@ -25,6 +38,7 @@ export class SchedulesController {
     });
   }
 
+  @Roles("OWNER", "MANAGER")
   @Post()
   async create(
     @TenantId() tenantId: string,
@@ -42,11 +56,12 @@ export class SchedulesController {
         itemId: dto.itemId,
         assignedUserId: dto.assignedUserId,
         reminderTimeOfDay: dto.reminderTimeOfDay,
-        recurrence: dto.recurrence as Prisma.InputJsonValue,
+        recurrence: dto.recurrence as JsonInput,
       },
     });
   }
 
+  @Roles("OWNER", "MANAGER")
   @Patch(":id")
   async update(
     @TenantId() tenantId: string,
@@ -63,15 +78,16 @@ export class SchedulesController {
     if (dto.itemId || dto.assignedUserId) {
       await this.ensureItemAndUser(tenantId, dto.itemId, dto.assignedUserId);
     }
-    const data: Prisma.ScheduleUpdateInput = {};
+    const data: ScheduleUpdateData = {};
     if (dto.reminderTimeOfDay !== undefined) data.reminderTimeOfDay = dto.reminderTimeOfDay;
     if (dto.active !== undefined) data.active = dto.active;
-    if (dto.recurrence !== undefined) data.recurrence = dto.recurrence as Prisma.InputJsonValue;
+    if (dto.recurrence !== undefined) data.recurrence = dto.recurrence as JsonInput;
     if (dto.itemId) data.item = { connect: { id: dto.itemId } };
     if (dto.assignedUserId) data.assignedUser = { connect: { id: dto.assignedUserId } };
     return this.prisma.schedule.update({ where: { id }, data });
   }
 
+  @Roles("OWNER", "MANAGER")
   @Delete(":id")
   async remove(@TenantId() tenantId: string, @Param("id") id: string) {
     await this.ensureOwned(tenantId, id);
