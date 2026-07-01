@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { supabase } from "@/lib/supabaseClient";
+import { supabase, isSupabaseConfigured } from "@/lib/supabaseClient";
 import { useTr, useCommon } from "@/lib/i18n";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { Button } from "@/components/ds/Button";
@@ -17,6 +17,8 @@ const M = {
     sentSuffix: ", a reset link is on its way. Check your inbox.",
     sendLink: "Send reset link",
     sending: "Sending…",
+    notConfigured:
+      "Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in apps/web/.env.local.",
     remembered: "Remembered it?",
     backToSignIn: "Back to sign in",
   },
@@ -27,6 +29,8 @@ const M = {
     sentSuffix: ", връзката за възстановяване вече е на път. Проверете пощата си.",
     sendLink: "Изпрати връзка за възстановяване",
     sending: "Изпращане…",
+    notConfigured:
+      "Supabase не е конфигуриран. Задайте NEXT_PUBLIC_SUPABASE_URL и NEXT_PUBLIC_SUPABASE_ANON_KEY в apps/web/.env.local.",
     remembered: "Сетихте ли се?",
     backToSignIn: "Обратно към входа",
   },
@@ -42,6 +46,10 @@ export default function ForgotPasswordPage() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!supabase) {
+      setError(t.notConfigured);
+      return;
+    }
     setError(null);
     setLoading(true);
     const redirectTo =
@@ -78,7 +86,7 @@ export default function ForgotPasswordPage() {
             <Input id="email" type="email" size="lg" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@restaurant.bg" />
           </Field>
           {error && <p style={{ fontSize: 13, color: "var(--red-600)", margin: 0 }}>{error}</p>}
-          <Button type="submit" variant="primary" size="lg" disabled={loading} style={{ width: "100%", marginTop: 2 }}>
+          <Button type="submit" variant="primary" size="lg" disabled={loading || !isSupabaseConfigured} style={{ width: "100%", marginTop: 2 }}>
             {loading ? t.sending : t.sendLink}
           </Button>
         </form>

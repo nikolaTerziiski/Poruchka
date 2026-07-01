@@ -43,7 +43,7 @@ export class OrdersController {
 
     const [rules, runs] = await Promise.all([
       this.prisma.orderRule.findMany({
-        where: { tenantId, active: true },
+        where: { tenantId, active: true, archivedAt: null },
         include: {
           supplier: { select: { name: true } },
           assignedUser: { select: { name: true } },
@@ -52,40 +52,61 @@ export class OrdersController {
       }),
       this.prisma.orderRun.findMany({
         where: { tenantId, dueDate: { gte: start.toJSDate(), lte: end.endOf("day").toJSDate() } },
-        include: { lines: { orderBy: { sortOrder: "asc" } } },
+        include: {
+          supplier: { select: { name: true } },
+          assignedUser: { select: { name: true } },
+          lines: { orderBy: { sortOrder: "asc" } },
+        },
       }),
     ]);
 
     const out: OrderOccurrence[] = [];
+    const runKeys = new Set<string>();
+
+    for (const run of runs) {
+      const date = DateTime.fromJSDate(run.dueDate, { zone }).toISODate() ?? "";
+      runKeys.add(`${run.orderRuleId}:${date}`);
+      out.push({
+        date,
+        orderRuleId: run.orderRuleId,
+        supplier: run.supplier.name,
+        assignee: run.assignedUser.name,
+        time: DateTime.fromJSDate(run.dueAt).setZone(zone).toFormat("HH:mm"),
+        status: run.status.toLowerCase(),
+        expectedDeliveryDate: run.expectedDeliveryDate
+          ? DateTime.fromJSDate(run.expectedDeliveryDate, { zone }).toISODate()
+          : null,
+        lines: run.lines.map((l) => ({
+          item: l.itemNameSnapshot,
+          quantity: l.quantitySnapshot,
+          unit: l.unitSnapshot,
+        })),
+      });
+    }
 
     for (let d = start; d <= end; d = d.plus({ days: 1 })) {
       for (const rule of rules) {
         const rec = rule.recurrence as unknown as Recurrence;
         if (!recurrenceMatchesDate(rec, d)) continue;
-        const run = runs.find(
-          (r) => r.orderRuleId === rule.id && DateTime.fromJSDate(r.dueDate, { zone }).hasSame(d, "day"),
-        );
-        const lines: OrderOccurrenceLine[] = run
-          ? run.lines.map((l) => ({ item: l.itemNameSnapshot, quantity: l.quantitySnapshot, unit: l.unitSnapshot }))
-          : rule.lines.map((l) => ({
-              item: l.item.name,
-              quantity: l.defaultQuantity,
-              unit: l.unit ?? l.item.unit,
-            }));
+        const date = d.toISODate() ?? "";
+        if (runKeys.has(`${rule.id}:${date}`)) continue;
+        const lines: OrderOccurrenceLine[] = rule.lines.map((l) => ({
+          item: l.item.name,
+          quantity: l.defaultQuantity,
+          unit: l.unit ?? l.item.unit,
+        }));
         out.push({
-          date: d.toISODate() ?? "",
+          date,
           orderRuleId: rule.id,
           supplier: rule.supplier.name,
           assignee: rule.assignedUser.name,
           time: rule.reminderTimeOfDay,
-          status: run ? run.status.toLowerCase() : "pending",
-          expectedDeliveryDate: run?.expectedDeliveryDate
-            ? DateTime.fromJSDate(run.expectedDeliveryDate, { zone }).toISODate()
-            : null,
+          status: "pending",
+          expectedDeliveryDate: null,
           lines,
         });
       }
     }
-    return out;
+    return out.sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time));
   }
 }

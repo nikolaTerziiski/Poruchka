@@ -34,7 +34,7 @@ const M = {
     calendar: "Calendar",
     suppliers: "Suppliers",
     items: "Items",
-    schedules: "Schedules",
+    schedules: "Order plans",
     team: "Team",
     notifications: "Notifications",
     loading: "Loading…",
@@ -47,7 +47,7 @@ const M = {
     calendar: "Календар",
     suppliers: "Доставчици",
     items: "Артикули",
-    schedules: "Графици",
+    schedules: "Планове",
     team: "Екип",
     notifications: "Известия",
     loading: "Зареждане…",
@@ -72,6 +72,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       setReady(true);
       return;
     }
+    if (!supabase) return;
     supabase.auth.getSession().then(({ data }) => {
       if (!data.session) {
         router.replace("/login");
@@ -93,6 +94,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }, [pathname]);
 
   async function signOut() {
+    if (!supabase) return;
     await supabase.auth.signOut();
     router.replace("/login");
   }

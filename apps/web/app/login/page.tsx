@@ -46,6 +46,10 @@ export default function LoginPage() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!supabase) {
+      setError(t.notConfigured);
+      return;
+    }
     setError(null);
     setLoading(true);
     const { error } = await supabase.auth.signInWithPassword({ email, password: pw });
@@ -88,7 +92,7 @@ export default function LoginPage() {
           </Link>
         </div>
         {error && <p style={{ fontSize: 13, color: "var(--red-600)", margin: 0 }}>{error}</p>}
-        <Button type="submit" variant="primary" size="lg" disabled={loading} style={{ width: "100%", marginTop: 2 }}>
+        <Button type="submit" variant="primary" size="lg" disabled={loading || !isSupabaseConfigured} style={{ width: "100%", marginTop: 2 }}>
           {loading ? t.signingIn : t.signIn}
         </Button>
       </form>

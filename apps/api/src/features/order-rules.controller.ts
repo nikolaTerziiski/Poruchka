@@ -55,7 +55,7 @@ export class OrderRulesController {
   @Get()
   list(@TenantId() tenantId: string) {
     return this.prisma.orderRule.findMany({
-      where: { tenantId },
+      where: { tenantId, archivedAt: null },
       orderBy: { createdAt: "desc" },
       include: RULE_INCLUDE,
     });
@@ -97,12 +97,15 @@ export class OrderRulesController {
     @Body(new ZodValidationPipe(updateOrderRuleSchema)) dto: UpdateOrderRuleInput,
   ) {
     const existing = await this.prisma.orderRule.findFirst({
-      where: { id, tenantId },
+      where: { id, tenantId, archivedAt: null },
       select: { id: true, supplierId: true },
     });
     if (!existing) throw new NotFoundException("Order rule not found");
 
     const supplierId = dto.supplierId ?? existing.supplierId;
+    if (dto.supplierId && dto.supplierId !== existing.supplierId && !dto.lines) {
+      throw new BadRequestException("Changing supplier requires replacing order lines");
+    }
     await this.validateRefs(tenantId, {
       supplierId: dto.supplierId,
       assignedUserId: dto.assignedUserId,
@@ -140,11 +143,14 @@ export class OrderRulesController {
   @Delete(":id")
   async remove(@TenantId() tenantId: string, @Param("id") id: string) {
     const existing = await this.prisma.orderRule.findFirst({
-      where: { id, tenantId },
+      where: { id, tenantId, archivedAt: null },
       select: { id: true },
     });
     if (!existing) throw new NotFoundException("Order rule not found");
-    await this.prisma.orderRule.delete({ where: { id } });
+    await this.prisma.orderRule.update({
+      where: { id },
+      data: { active: false, archivedAt: new Date() },
+    });
     return { ok: true };
   }
 
@@ -155,7 +161,7 @@ export class OrderRulesController {
     refs: {
       supplierId?: string;
       assignedUserId?: string;
-      escalationUserId?: string;
+      escalationUserId?: string | null;
       itemIds?: string[];
       supplierForItems?: string;
     },

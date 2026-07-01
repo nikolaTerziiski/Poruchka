@@ -37,4 +37,8 @@ describe("administrative mutation authorization metadata", () => {
       expect(rolesFor(OrderRulesController, method)).toEqual(["OWNER", "MANAGER"]);
     }
   });
+
+  it("does not require mutation roles for order-rule listing", () => {
+    expect(rolesFor(OrderRulesController, "list")).toEqual([]);
+  });
 });

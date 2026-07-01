@@ -37,7 +37,7 @@ const M = {
     noteHint: "What exactly to order — shown in the reminder (e.g. ≈20 kg, lean)",
     notePlaceholder: "≈20 kg, lean for the grill",
     deleteTitle: (name: string) => `Delete ${name}?`,
-    deleteDescription: "This item will be removed. Any schedules using it will need a new item.",
+    deleteDescription: "This item will be removed. Any order plans using it will need a new item.",
     deleteConfirm: "Delete item",
     loadFailed: "Failed to load items.",
     saveFailed: "Could not save item.",
@@ -70,7 +70,7 @@ const M = {
     notePlaceholder: "≈20 кг, постно за скара",
     deleteTitle: (name: string) => `Изтриване на „${name}“?`,
     deleteDescription:
-      "Артикулът ще бъде премахнат. Всички графици, които го използват, ще се нуждаят от нов артикул.",
+      "Артикулът ще бъде премахнат. Всички планове, които го използват, ще се нуждаят от нов артикул.",
     deleteConfirm: "Изтрий артикул",
     loadFailed: "Зареждането на артикулите не бе успешно.",
     saveFailed: "Артикулът не може да бъде запазен.",

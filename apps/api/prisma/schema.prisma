@@ -132,6 +132,7 @@ model OrderRule {
   cutoffTime                 String? // local "HH:mm" deadline to place the order
   expectedDeliveryOffsetDays Int? // delivery lands this many days after the order
   active                     Boolean  @default(true)
+  archivedAt                 DateTime?
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
 
@@ -139,6 +140,7 @@ model OrderRule {
   runs  OrderRun[]
 
   @@index([tenantId])
+  @@index([tenantId, archivedAt])
   @@index([supplierId])
   @@map("order_rules")
 }

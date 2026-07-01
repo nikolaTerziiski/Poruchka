@@ -50,7 +50,7 @@ export class SchedulerService {
     const tenants = await this.prisma.tenant.findMany({
       include: {
         orderRules: {
-          where: { active: true },
+          where: { active: true, archivedAt: null },
           include: { lines: { include: { item: true }, orderBy: { sortOrder: "asc" } } },
         },
       },

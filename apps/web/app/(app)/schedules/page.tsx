@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Plus, Pencil, Trash2, Repeat } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Plus, Pencil, Trash2, Repeat, X } from "lucide-react";
 import { Button } from "@/components/ds/Button";
 import { Input } from "@/components/ds/Input";
 import { Field } from "@/components/ds/Field";
@@ -15,18 +15,18 @@ import { api } from "@/lib/api";
 import type { Recurrence } from "@poruchka/shared";
 import { useTr, useCommon, useLang, type Lang } from "@/lib/i18n";
 
-interface Schedule {
-  id: string;
-  reminderTimeOfDay: string;
-  recurrence: Recurrence;
-  active: boolean;
-  item: { id: string; name: string; supplier: { name: string } };
-  assignedUser: { id: string; name: string };
-}
-
-interface ItemOption {
+interface Supplier {
   id: string;
   name: string;
+}
+
+interface Item {
+  id: string;
+  name: string;
+  unit: string | null;
+  notes: string | null;
+  supplierId: string;
+  supplier: { id: string; name: string };
 }
 
 interface TeamMember {
@@ -34,139 +34,175 @@ interface TeamMember {
   name: string;
 }
 
+interface OrderRuleLine {
+  id: string;
+  itemId: string;
+  defaultQuantity: number | null;
+  unit: string | null;
+  notes: string | null;
+  sortOrder: number;
+  item: { id: string; name: string; unit: string | null };
+}
+
+interface OrderRule {
+  id: string;
+  supplierId: string;
+  assignedUserId: string;
+  escalationUserId: string | null;
+  reminderTimeOfDay: string;
+  recurrence: Recurrence;
+  cutoffTime: string | null;
+  expectedDeliveryOffsetDays: number | null;
+  active: boolean;
+  supplier: Supplier;
+  assignedUser: TeamMember;
+  escalationUser: TeamMember | null;
+  lines: OrderRuleLine[];
+}
+
+interface DraftLine {
+  itemId: string;
+  defaultQuantity: string;
+  unit: string;
+  notes: string;
+}
+
 type Mode = "daily" | "weekly" | "interval";
 
 const TODAY = new Date().toISOString().slice(0, 10);
 
-/** ISO weekday order (1 = Mon … 7 = Sun) for toggle labels, per language. */
 const WEEKDAY_LABELS: Record<Lang, string[]> = {
   en: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
   bg: ["Пон", "Вт", "Ср", "Чет", "Пет", "Съб", "Нед"],
 };
 
-/** Full weekday names used inside the recurrence sentence, per language. */
 const WEEKDAY_FULL: Record<Lang, string[]> = {
   en: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
   bg: ["понеделник", "вторник", "сряда", "четвъртък", "петък", "събота", "неделя"],
 };
 
-/**
- * Localized recurrence label computed inline from the recurrence object.
- * bg uses gendered "Всеки/Всяка" before a weekday — "Всяка сряда", "Всеки ден",
- * "На всеки 14 дни".
- */
-function localizedRecurrenceLabel(r: Recurrence, lang: Lang): string {
-  if (lang === "bg") {
-    if (r.type === "daily") return "Всеки ден";
-    if (r.type === "interval") {
-      const n = r.everyNDays;
-      return n === 1 ? "Всеки ден" : `На всеки ${n} дни`;
-    }
-    if (r.type === "weekly") {
-      if (r.weekdays.length === 7) return "Всеки ден";
-      // "Всяка сряда" but "Всеки понеделник/вторник/…" — only сряда/събота/неделя are feminine.
-      const feminine = new Set([3, 6, 7]); // сряда, събота, неделя
-      return r.weekdays
-        .map((d) => `${feminine.has(d) ? "Всяка" : "Всеки"} ${WEEKDAY_FULL.bg[d - 1]}`)
-        .join(", ");
-    }
-    return "";
-  }
-  // en
-  if (r.type === "daily") return "Every day";
+function recurrenceLabel(r: Recurrence, lang: Lang): string {
+  if (r.type === "daily") return lang === "bg" ? "Всеки ден" : "Every day";
   if (r.type === "interval") {
-    const n = r.everyNDays;
-    return n === 1 ? "Every day" : `Every ${n} days`;
+    if (r.everyNDays === 1) return lang === "bg" ? "Всеки ден" : "Every day";
+    return lang === "bg" ? `На всеки ${r.everyNDays} дни` : `Every ${r.everyNDays} days`;
   }
-  if (r.type === "weekly") {
-    if (r.weekdays.length === 7) return "Every day";
-    return "Every " + r.weekdays.map((d) => WEEKDAY_FULL.en[d - 1]).join(", ");
-  }
-  return "";
+  if (r.weekdays.length === 7) return lang === "bg" ? "Всеки ден" : "Every day";
+  return (lang === "bg" ? "Всеки " : "Every ") + r.weekdays.map((d) => WEEKDAY_FULL[lang][d - 1]).join(", ");
+}
+
+function lineSummary(lines: OrderRuleLine[], empty: string): string {
+  if (!lines.length) return empty;
+  const names = lines.slice(0, 3).map((l) => l.item.name).join(", ");
+  return lines.length > 3 ? `${names} +${lines.length - 3}` : names;
 }
 
 const M = {
   en: {
-    title: "Schedules",
-    subtitle: "When each item is ordered, and who's responsible",
-    newSchedule: "New schedule",
-    addItemFirst: "Add an item first",
-    loadFailed: "Failed to load schedules.",
-    loadingSchedules: "Loading schedules…",
-    emptyTitle: "No schedules yet",
-    emptyDesc:
-      "Tell Poruchka what to order and when — e.g. Pork Meat from Metro, every Wednesday at 09:00.",
-    colItem: "Item",
+    title: "Order plans",
+    subtitle: "Supplier reminders with item checklists",
+    newPlan: "New supplier reminder",
+    addBasicsFirst: "Add a supplier, item, and team member first",
+    loadFailed: "Failed to load order plans.",
+    loading: "Loading order plans...",
+    emptyTitle: "No order plans yet",
+    emptyDesc: "Add the items this supplier order should remind you to check.",
+    colSupplier: "Supplier",
+    colItems: "Items",
     colRecurrence: "Recurrence",
     colTime: "Time",
     colResponsible: "Responsible",
     colActive: "Active",
     on: "On",
     paused: "Paused",
-    pauseSchedule: "Pause schedule",
-    activateSchedule: "Activate schedule",
-    editSchedule: "Edit schedule",
-    deleteScheduleAria: "Delete schedule",
-    deleteTitle: "Delete this schedule?",
-    deleteConfirm: "Delete schedule",
-    dialogEditTitle: "Edit schedule",
-    dialogNewTitle: "New schedule",
+    pause: "Pause order plan",
+    activate: "Activate order plan",
+    edit: "Edit order plan",
+    deleteAria: "Archive order plan",
+    archiveTitle: "Archive this order plan?",
+    archiveDesc: "Future reminders stop, but existing order history stays visible.",
+    archiveConfirm: "Archive plan",
+    dialogEditTitle: "Edit order plan",
+    dialogNewTitle: "New order plan",
     saveChanges: "Save changes",
-    createSchedule: "Create schedule",
-    fieldItem: "Item",
-    fieldResponsible: "Responsible",
-    selectItem: "Select an item…",
-    selectPerson: "Select a person…",
+    createPlan: "Create plan",
+    supplier: "Supplier",
+    responsible: "Responsible",
+    escalation: "Escalation person",
+    optional: "Optional",
+    selectSupplier: "Select supplier...",
+    selectPerson: "Select person...",
+    noEscalation: "No escalation person",
+    lines: "Items to check",
+    addLine: "Add item",
+    item: "Item",
+    quantity: "Usual qty",
+    unit: "Unit",
+    note: "Note",
+    removeLine: "Remove item",
     recurrence: "Recurrence",
     modeDaily: "Daily",
     modeWeekly: "Weekly",
     modeInterval: "Every N days",
     every: "Every",
     days: "days",
-    dailyHint: "A reminder will be sent every day at the time below.",
     reminderTime: "Reminder time",
-    reminderTimeHint: "In the restaurant's timezone (Europe/Sofia)",
+    cutoffTime: "Cutoff time",
+    deliveryOffset: "Delivery offset days",
+    none: "None",
   },
   bg: {
-    title: "Графици",
-    subtitle: "Кога се поръчва всеки артикул и кой отговаря",
-    newSchedule: "Нов график",
-    addItemFirst: "Първо добавете артикул",
-    loadFailed: "Неуспешно зареждане на графиците.",
-    loadingSchedules: "Зареждане на графиците…",
-    emptyTitle: "Все още няма графици",
-    emptyDesc:
-      "Кажете на Poruchka какво и кога да поръчва — напр. свинско месо от Метро, всяка сряда в 09:00.",
-    colItem: "Артикул",
+    title: "Планове за поръчки",
+    subtitle: "Напомняния към доставчици със списък за проверка",
+    newPlan: "Ново напомняне",
+    addBasicsFirst: "Първо добавете доставчик, артикул и член на екипа",
+    loadFailed: "Неуспешно зареждане на плановете.",
+    loading: "Зареждане на плановете...",
+    emptyTitle: "Все още няма планове",
+    emptyDesc: "Добавете артикулите, за които тази поръчка към доставчик трябва да ви подсеща.",
+    colSupplier: "Доставчик",
+    colItems: "Артикули",
     colRecurrence: "Повторение",
     colTime: "Час",
     colResponsible: "Отговорник",
     colActive: "Активен",
     on: "Включен",
     paused: "На пауза",
-    pauseSchedule: "Постави на пауза",
-    activateSchedule: "Активирай графика",
-    editSchedule: "Редактирай графика",
-    deleteScheduleAria: "Изтрий графика",
-    deleteTitle: "Да изтрием ли този график?",
-    deleteConfirm: "Изтрий графика",
-    dialogEditTitle: "Редактиране на график",
-    dialogNewTitle: "Нов график",
-    saveChanges: "Запази промените",
-    createSchedule: "Създай график",
-    fieldItem: "Артикул",
-    fieldResponsible: "Отговорник",
-    selectItem: "Изберете артикул…",
-    selectPerson: "Изберете човек…",
+    pause: "Постави плана на пауза",
+    activate: "Активирай плана",
+    edit: "Редактирай плана",
+    deleteAria: "Архивирай плана",
+    archiveTitle: "Да архивираме ли този план?",
+    archiveDesc: "Бъдещите напомняния спират, но историята на поръчките остава видима.",
+    archiveConfirm: "Архивирай",
+    dialogEditTitle: "Редактиране на план",
+    dialogNewTitle: "Нов план",
+    saveChanges: "Запази",
+    createPlan: "Създай план",
+    supplier: "Доставчик",
+    responsible: "Отговорник",
+    escalation: "Ескалация към",
+    optional: "По избор",
+    selectSupplier: "Изберете доставчик...",
+    selectPerson: "Изберете човек...",
+    noEscalation: "Без ескалация",
+    lines: "Артикули за проверка",
+    addLine: "Добави артикул",
+    item: "Артикул",
+    quantity: "Обичайно кол. (по желание)",
+    unit: "Мярка",
+    note: "Бележка",
+    removeLine: "Премахни артикул",
     recurrence: "Повторение",
     modeDaily: "Ежедневно",
     modeWeekly: "Седмично",
     modeInterval: "На всеки N дни",
     every: "На всеки",
     days: "дни",
-    dailyHint: "Напомняне ще се изпраща всеки ден в посочения по-долу час.",
     reminderTime: "Час за напомняне",
-    reminderTimeHint: "В часовата зона на ресторанта (Europe/Sofia)",
+    cutoffTime: "Краен час",
+    deliveryOffset: "Дни до доставка",
+    none: "Няма",
   },
 } as const;
 
@@ -174,31 +210,32 @@ export default function SchedulesPage() {
   const t = useTr(M);
   const c = useCommon();
   const lang = useLang();
-  const [rows, setRows] = useState<Schedule[]>([]);
-  const [items, setItems] = useState<ItemOption[]>([]);
+  const [rules, setRules] = useState<OrderRule[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [items, setItems] = useState<Item[]>([]);
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  const [editing, setEditing] = useState<Schedule | null>(null);
+  const [editing, setEditing] = useState<OrderRule | null>(null);
   const [creating, setCreating] = useState(false);
-  const [deleting, setDeleting] = useState<Schedule | null>(null);
+  const [archiving, setArchiving] = useState<OrderRule | null>(null);
 
   const refetch = useCallback(async () => {
-    const data = await api<Schedule[]>("/schedules");
-    setRows(data);
+    setRules(await api<OrderRule[]>("/order-rules"));
   }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [schedules, itemList, teamList] = await Promise.all([
-        api<Schedule[]>("/schedules"),
-        api<ItemOption[]>("/items"),
+      const [ruleList, supplierList, itemList, teamList] = await Promise.all([
+        api<OrderRule[]>("/order-rules"),
+        api<Supplier[]>("/suppliers"),
+        api<Item[]>("/items"),
         api<TeamMember[]>("/team"),
       ]);
-      setRows(schedules);
+      setRules(ruleList);
+      setSuppliers(supplierList);
       setItems(itemList);
       setTeam(teamList);
     } catch (e) {
@@ -206,32 +243,28 @@ export default function SchedulesPage() {
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, [t.loadFailed]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const toggleActive = useCallback(
-    async (row: Schedule) => {
-      await api(`/schedules/${row.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ active: !row.active }),
-      });
-      await refetch();
-    },
-    [refetch],
-  );
+  const missingBasics = suppliers.length === 0 || items.length === 0 || team.length === 0;
 
-  const confirmDelete = useCallback(async () => {
-    if (!deleting) return;
-    await api(`/schedules/${deleting.id}`, { method: "DELETE" });
+  async function toggleActive(rule: OrderRule) {
+    await api(`/order-rules/${rule.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ active: !rule.active }),
+    });
     await refetch();
-    setDeleting(null);
-  }, [deleting, refetch]);
+  }
 
-  const dialogOpen = creating || editing !== null;
-  const noItems = items.length === 0;
+  async function confirmArchive() {
+    if (!archiving) return;
+    await api(`/order-rules/${archiving.id}`, { method: "DELETE" });
+    setArchiving(null);
+    await refetch();
+  }
 
   return (
     <div style={{ padding: "32px 36px", maxWidth: 1120, margin: "0 auto" }}>
@@ -242,42 +275,28 @@ export default function SchedulesPage() {
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
             <Button
               icon={<Plus size={16} />}
-              disabled={noItems}
+              disabled={missingBasics}
               onClick={() => {
                 setEditing(null);
                 setCreating(true);
               }}
             >
-              {t.newSchedule}
+              {t.newPlan}
             </Button>
-            {noItems ? (
-              <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{t.addItemFirst}</span>
-            ) : null}
+            {missingBasics ? <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{t.addBasicsFirst}</span> : null}
           </div>
         }
       />
 
       {error ? (
-        <div
-          style={{
-            background: "var(--status-escalated-bg)",
-            border: "1px solid var(--status-escalated-bd)",
-            color: "var(--status-escalated-fg)",
-            borderRadius: "var(--radius-md)",
-            padding: "12px 16px",
-            fontSize: 14,
-            marginBottom: 18,
-          }}
-        >
-          {error}
-        </div>
+        <div style={{ color: "var(--red-600)", fontSize: 14, marginBottom: 16 }}>{error}</div>
       ) : null}
 
       {loading ? (
         <div style={{ padding: "48px 24px", textAlign: "center", color: "var(--text-muted)", fontSize: 14 }}>
-          {t.loadingSchedules}
+          {t.loading}
         </div>
-      ) : rows.length === 0 ? (
+      ) : rules.length === 0 ? (
         <EmptyState
           icon={<Repeat size={22} />}
           title={t.emptyTitle}
@@ -285,42 +304,44 @@ export default function SchedulesPage() {
           action={
             <Button
               icon={<Plus size={16} />}
-              disabled={noItems}
+              disabled={missingBasics}
               onClick={() => {
                 setEditing(null);
                 setCreating(true);
               }}
             >
-              {t.newSchedule}
+              {t.newPlan}
             </Button>
           }
         />
       ) : (
-        <Table<Schedule>
+        <Table<OrderRule>
           columns={[
-            { key: "item", label: t.colItem },
+            { key: "supplier", label: t.colSupplier },
+            { key: "items", label: t.colItems },
             { key: "recurrence", label: t.colRecurrence },
-            { key: "time", label: t.colTime, width: 90 },
+            { key: "time", label: t.colTime, width: 110 },
             { key: "assignee", label: t.colResponsible },
             { key: "active", label: t.colActive, align: "center", width: 90 },
             { key: "actions", label: "", align: "right", width: 90 },
           ]}
-          rows={rows}
+          rows={rules}
           rowKey={(r) => r.id}
           renderCell={(r, key) => {
-            if (key === "item")
+            if (key === "supplier") return <span style={{ fontWeight: 600, color: "var(--text-strong)" }}>{r.supplier.name}</span>;
+            if (key === "items")
               return (
                 <span>
-                  <span style={{ fontWeight: 600, color: "var(--text-strong)", display: "block" }}>{r.item.name}</span>
-                  <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{r.item.supplier.name}</span>
+                  <span style={{ display: "block", color: "var(--text-body)" }}>{lineSummary(r.lines, t.none)}</span>
+                  <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{r.lines.length} item{r.lines.length === 1 ? "" : "s"}</span>
                 </span>
               );
-            if (key === "recurrence")
-              return <Badge tone="accent">{localizedRecurrenceLabel(r.recurrence, lang)}</Badge>;
+            if (key === "recurrence") return <Badge tone="accent">{recurrenceLabel(r.recurrence, lang)}</Badge>;
             if (key === "time")
               return (
                 <span style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--text-body)" }}>
                   {r.reminderTimeOfDay}
+                  {r.cutoffTime ? <span style={{ color: "var(--text-muted)" }}> / {r.cutoffTime}</span> : null}
                 </span>
               );
             if (key === "assignee") return <span style={{ color: "var(--text-body)" }}>{r.assignedUser.name}</span>;
@@ -330,7 +351,7 @@ export default function SchedulesPage() {
                   type="button"
                   onClick={() => void toggleActive(r)}
                   style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
-                  aria-label={r.active ? t.pauseSchedule : t.activateSchedule}
+                  aria-label={r.active ? t.pause : t.activate}
                 >
                   {r.active ? <Badge tone="confirmed" dot>{t.on}</Badge> : <Badge tone="neutral">{t.paused}</Badge>}
                 </button>
@@ -341,7 +362,7 @@ export default function SchedulesPage() {
                   variant="ghost"
                   size="sm"
                   icon={<Pencil size={15} />}
-                  aria-label={t.editSchedule}
+                  aria-label={t.edit}
                   onClick={() => {
                     setCreating(false);
                     setEditing(r);
@@ -351,8 +372,8 @@ export default function SchedulesPage() {
                   variant="ghost"
                   size="sm"
                   icon={<Trash2 size={15} color="var(--red-500)" />}
-                  aria-label={t.deleteScheduleAria}
-                  onClick={() => setDeleting(r)}
+                  aria-label={t.deleteAria}
+                  onClick={() => setArchiving(r)}
                 />
               </div>
             );
@@ -360,9 +381,10 @@ export default function SchedulesPage() {
         />
       )}
 
-      {dialogOpen ? (
-        <ScheduleDialog
-          schedule={editing}
+      {creating || editing ? (
+        <OrderPlanDialog
+          rule={editing}
+          suppliers={suppliers}
           items={items}
           team={team}
           onClose={() => {
@@ -377,30 +399,32 @@ export default function SchedulesPage() {
         />
       ) : null}
 
-      {deleting ? (
+      {archiving ? (
         <Dialog
           tone="danger"
-          title={t.deleteTitle}
-          description={`${deleting.item.name} — ${localizedRecurrenceLabel(deleting.recurrence, lang)}`}
-          confirmLabel={t.deleteConfirm}
+          title={t.archiveTitle}
+          description={`${archiving.supplier.name} - ${lineSummary(archiving.lines, t.none)}. ${t.archiveDesc}`}
+          confirmLabel={t.archiveConfirm}
           cancelLabel={c.cancel}
-          onCancel={() => setDeleting(null)}
-          onConfirm={() => void confirmDelete()}
+          onCancel={() => setArchiving(null)}
+          onConfirm={() => void confirmArchive()}
         />
       ) : null}
     </div>
   );
 }
 
-function ScheduleDialog({
-  schedule,
+function OrderPlanDialog({
+  rule,
+  suppliers,
   items,
   team,
   onClose,
   onSaved,
 }: {
-  schedule: Schedule | null;
-  items: ItemOption[];
+  rule: OrderRule | null;
+  suppliers: Supplier[];
+  items: Item[];
   team: TeamMember[];
   onClose: () => void;
   onSaved: () => Promise<void> | void;
@@ -408,107 +432,216 @@ function ScheduleDialog({
   const t = useTr(M);
   const c = useCommon();
   const lang = useLang();
-  const initialMode: Mode = schedule ? schedule.recurrence.type : "weekly";
-
-  const modeOptions: [Mode, string][] = [
-    ["daily", t.modeDaily],
-    ["weekly", t.modeWeekly],
-    ["interval", t.modeInterval],
-  ];
-  const weekdayLabels = WEEKDAY_LABELS[lang];
-
-  const [itemId, setItemId] = useState<string>(schedule?.item.id ?? "");
-  const [assignedUserId, setAssignedUserId] = useState<string>(schedule?.assignedUser.id ?? "");
+  const initialMode: Mode = rule ? rule.recurrence.type : "weekly";
+  const [supplierId, setSupplierId] = useState(rule?.supplierId ?? suppliers[0]?.id ?? "");
+  const [assignedUserId, setAssignedUserId] = useState(rule?.assignedUserId ?? team[0]?.id ?? "");
+  const [escalationUserId, setEscalationUserId] = useState(rule?.escalationUserId ?? "");
   const [mode, setMode] = useState<Mode>(initialMode);
   const [weekdays, setWeekdays] = useState<number[]>(
-    schedule && schedule.recurrence.type === "weekly" ? schedule.recurrence.weekdays : [3],
+    rule && rule.recurrence.type === "weekly" ? rule.recurrence.weekdays : [3],
   );
-  const [everyNDays, setEveryNDays] = useState<number>(
-    schedule && schedule.recurrence.type === "interval" ? schedule.recurrence.everyNDays : 14,
+  const [everyNDays, setEveryNDays] = useState(
+    rule && rule.recurrence.type === "interval" ? rule.recurrence.everyNDays : 14,
   );
-  const [time, setTime] = useState<string>(schedule?.reminderTimeOfDay ?? "09:00");
+  const [time, setTime] = useState(rule?.reminderTimeOfDay ?? "09:00");
+  const [cutoffTime, setCutoffTime] = useState(rule?.cutoffTime ?? "");
+  const [deliveryOffset, setDeliveryOffset] = useState(
+    rule?.expectedDeliveryOffsetDays != null ? String(rule.expectedDeliveryOffsetDays) : "",
+  );
+  const [lines, setLines] = useState<DraftLine[]>(
+    rule?.lines.map((l) => ({
+      itemId: l.itemId,
+      defaultQuantity: l.defaultQuantity != null ? String(l.defaultQuantity) : "",
+      unit: l.unit ?? l.item.unit ?? "",
+      notes: l.notes ?? "",
+    })) ?? [{ itemId: "", defaultQuantity: "", unit: "", notes: "" }],
+  );
   const [busy, setBusy] = useState(false);
 
-  const toggleDay = (d: number) =>
-    setWeekdays((ds) => (ds.includes(d) ? ds.filter((x) => x !== d) : [...ds, d].sort((a, b) => a - b)));
+  const supplierItems = useMemo(() => items.filter((i) => i.supplierId === supplierId), [items, supplierId]);
 
-  const buildRecurrence = (): Recurrence => {
+  function updateSupplier(nextSupplierId: string) {
+    setSupplierId(nextSupplierId);
+    const first = items.find((i) => i.supplierId === nextSupplierId);
+    setLines([{ itemId: first?.id ?? "", defaultQuantity: "", unit: first?.unit ?? "", notes: first?.notes ?? "" }]);
+  }
+
+  function updateLine(index: number, patch: Partial<DraftLine>) {
+    setLines((current) =>
+      current.map((line, i) => {
+        if (i !== index) return line;
+        const next = { ...line, ...patch };
+        if (patch.itemId) {
+          const item = items.find((candidate) => candidate.id === patch.itemId);
+          next.unit = item?.unit ?? "";
+          next.notes = item?.notes ?? "";
+        }
+        return next;
+      }),
+    );
+  }
+
+  function addLine() {
+    const firstUnused = supplierItems.find((item) => !lines.some((line) => line.itemId === item.id));
+    setLines((current) => [
+      ...current,
+      { itemId: firstUnused?.id ?? "", defaultQuantity: "", unit: firstUnused?.unit ?? "", notes: firstUnused?.notes ?? "" },
+    ]);
+  }
+
+  function removeLine(index: number) {
+    setLines((current) => (current.length === 1 ? current : current.filter((_line, i) => i !== index)));
+  }
+
+  function toggleDay(day: number) {
+    setWeekdays((current) =>
+      current.includes(day) ? current.filter((d) => d !== day) : [...current, day].sort((a, b) => a - b),
+    );
+  }
+
+  function buildRecurrence(): Recurrence {
     if (mode === "daily") return { type: "daily" };
-    if (mode === "interval")
-      return { type: "interval", everyNDays: everyNDays || 1, anchorDate: TODAY };
+    if (mode === "interval") return { type: "interval", everyNDays: everyNDays || 1, anchorDate: TODAY };
     return { type: "weekly", weekdays };
-  };
+  }
 
-  const confirmDisabled = !itemId || !assignedUserId || (mode === "weekly" && weekdays.length === 0);
+  const validLines = lines.every((line) => line.itemId);
+  const confirmDisabled = !supplierId || !assignedUserId || !lines.length || !validLines || (mode === "weekly" && weekdays.length === 0);
 
-  const handleConfirm = async () => {
+  async function save() {
     if (confirmDisabled) return;
     setBusy(true);
     try {
-      const recurrence = buildRecurrence();
-      if (schedule) {
-        await api(`/schedules/${schedule.id}`, {
-          method: "PATCH",
-          body: JSON.stringify({ itemId, assignedUserId, reminderTimeOfDay: time, recurrence }),
-        });
+      const payload = {
+        supplierId,
+        assignedUserId,
+        escalationUserId: escalationUserId || null,
+        reminderTimeOfDay: time,
+        recurrence: buildRecurrence(),
+        cutoffTime: cutoffTime || undefined,
+        expectedDeliveryOffsetDays: deliveryOffset === "" ? undefined : Number(deliveryOffset),
+        lines: lines.map((line, index) => ({
+          itemId: line.itemId,
+          defaultQuantity:
+            line.defaultQuantity === "" || Number(line.defaultQuantity) <= 0
+              ? undefined
+              : Number(line.defaultQuantity),
+          unit: line.unit.trim() || undefined,
+          notes: line.notes.trim() || undefined,
+          sortOrder: index,
+        })),
+      };
+      if (rule) {
+        await api(`/order-rules/${rule.id}`, { method: "PATCH", body: JSON.stringify(payload) });
       } else {
-        await api("/schedules", {
-          method: "POST",
-          body: JSON.stringify({ itemId, assignedUserId, reminderTimeOfDay: time, recurrence }),
-        });
+        await api("/order-rules", { method: "POST", body: JSON.stringify(payload) });
       }
       await onSaved();
     } finally {
       setBusy(false);
     }
-  };
+  }
 
   return (
     <Dialog
-      title={schedule ? t.dialogEditTitle : t.dialogNewTitle}
-      confirmLabel={schedule ? t.saveChanges : t.createSchedule}
+      title={rule ? t.dialogEditTitle : t.dialogNewTitle}
+      confirmLabel={rule ? t.saveChanges : t.createPlan}
       cancelLabel={c.cancel}
-      width={520}
+      width={760}
       confirmDisabled={confirmDisabled}
       busy={busy}
       onCancel={onClose}
-      onConfirm={() => void handleConfirm()}
+      onConfirm={() => void save()}
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <Field label={t.fieldItem}>
-            <Select value={itemId} onChange={(e) => setItemId(e.target.value)}>
-              <option value="" disabled>
-                {t.selectItem}
-              </option>
-              {items.map((i) => (
-                <option key={i.id} value={i.id}>
-                  {i.name}
-                </option>
+          <Field label={t.supplier}>
+            <Select value={supplierId} onChange={(e) => updateSupplier(e.target.value)}>
+              <option value="" disabled>{t.selectSupplier}</option>
+              {suppliers.map((supplier) => (
+                <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
               ))}
             </Select>
           </Field>
-          <Field label={t.fieldResponsible}>
+          <Field label={t.responsible}>
             <Select value={assignedUserId} onChange={(e) => setAssignedUserId(e.target.value)}>
-              <option value="" disabled>
-                {t.selectPerson}
-              </option>
+              <option value="" disabled>{t.selectPerson}</option>
               {team.map((member) => (
-                <option key={member.id} value={member.id}>
-                  {member.name}
-                </option>
+                <option key={member.id} value={member.id}>{member.name}</option>
               ))}
             </Select>
+          </Field>
+          <Field label={t.escalation} hint={t.optional}>
+            <Select value={escalationUserId} onChange={(e) => setEscalationUserId(e.target.value)}>
+              <option value="">{t.noEscalation}</option>
+              {team.map((member) => (
+                <option key={member.id} value={member.id}>{member.name}</option>
+              ))}
+            </Select>
+          </Field>
+          <Field label={t.deliveryOffset} hint={t.optional}>
+            <Input
+              type="number"
+              min={0}
+              value={deliveryOffset}
+              onChange={(e) => setDeliveryOffset(e.target.value)}
+              placeholder="1"
+            />
           </Field>
         </div>
 
+        <Field label={t.lines}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {lines.map((line, index) => (
+              <div
+                key={index}
+                style={{ display: "grid", gridTemplateColumns: "minmax(180px, 1.4fr) 140px 90px minmax(160px, 1fr) 34px", gap: 8, alignItems: "center" }}
+              >
+                <Select value={line.itemId} onChange={(e) => updateLine(index, { itemId: e.target.value })}>
+                  <option value="" disabled>{t.item}</option>
+                  {supplierItems.map((item) => (
+                    <option key={item.id} value={item.id}>{item.name}</option>
+                  ))}
+                </Select>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={line.defaultQuantity}
+                  onChange={(e) => updateLine(index, { defaultQuantity: e.target.value })}
+                  placeholder={t.quantity}
+                />
+                <Input value={line.unit} onChange={(e) => updateLine(index, { unit: e.target.value })} placeholder={t.unit} />
+                <Input value={line.notes} onChange={(e) => updateLine(index, { notes: e.target.value })} placeholder={t.note} />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<X size={15} />}
+                  aria-label={t.removeLine}
+                  disabled={lines.length === 1}
+                  onClick={() => removeLine(index)}
+                />
+              </div>
+            ))}
+            <div>
+              <Button variant="secondary" size="sm" icon={<Plus size={15} />} onClick={addLine} disabled={!supplierItems.length}>
+                {t.addLine}
+              </Button>
+            </div>
+          </div>
+        </Field>
+
         <Field label={t.recurrence}>
           <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-            {modeOptions.map(([k, l]) => (
+            {([
+              ["daily", t.modeDaily],
+              ["weekly", t.modeWeekly],
+              ["interval", t.modeInterval],
+            ] as [Mode, string][]).map(([key, label]) => (
               <button
-                key={k}
+                key={key}
                 type="button"
-                onClick={() => setMode(k)}
+                onClick={() => setMode(key)}
                 style={{
                   flex: 1,
                   padding: "8px 0",
@@ -517,25 +650,26 @@ function ScheduleDialog({
                   fontSize: 13,
                   fontWeight: 600,
                   cursor: "pointer",
-                  border: `1px solid ${mode === k ? "var(--brand-300)" : "var(--border-default)"}`,
-                  background: mode === k ? "var(--brand-50)" : "var(--surface-card)",
-                  color: mode === k ? "var(--brand-700)" : "var(--text-body)",
+                  border: `1px solid ${mode === key ? "var(--brand-300)" : "var(--border-default)"}`,
+                  background: mode === key ? "var(--brand-50)" : "var(--surface-card)",
+                  color: mode === key ? "var(--brand-700)" : "var(--text-body)",
                 }}
               >
-                {l}
+                {label}
               </button>
             ))}
           </div>
 
           {mode === "weekly" ? (
             <div style={{ display: "flex", gap: 6 }}>
-              {weekdayLabels.map((d, i) => {
-                const on = weekdays.includes(i + 1);
+              {WEEKDAY_LABELS[lang].map((label, index) => {
+                const day = index + 1;
+                const on = weekdays.includes(day);
                 return (
                   <button
-                    key={i}
+                    key={day}
                     type="button"
-                    onClick={() => toggleDay(i + 1)}
+                    onClick={() => toggleDay(day)}
                     style={{
                       width: 40,
                       height: 40,
@@ -549,7 +683,7 @@ function ScheduleDialog({
                       color: on ? "#fff" : "var(--text-muted)",
                     }}
                   >
-                    {d}
+                    {label}
                   </button>
                 );
               })}
@@ -569,17 +703,16 @@ function ScheduleDialog({
               <span style={{ fontSize: 14, color: "var(--text-body)" }}>{t.days}</span>
             </div>
           ) : null}
-
-          {mode === "daily" ? (
-            <p style={{ fontSize: 13, color: "var(--text-muted)", margin: 0 }}>
-              {t.dailyHint}
-            </p>
-          ) : null}
         </Field>
 
-        <Field label={t.reminderTime} hint={t.reminderTimeHint}>
-          <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} style={{ width: 140 }} />
-        </Field>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label={t.reminderTime}>
+            <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+          </Field>
+          <Field label={t.cutoffTime} hint={t.optional}>
+            <Input type="time" value={cutoffTime} onChange={(e) => setCutoffTime(e.target.value)} />
+          </Field>
+        </div>
       </div>
     </Dialog>
   );

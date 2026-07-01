@@ -12,6 +12,10 @@ export async function api<T = unknown>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
+  if (!supabase) {
+    throw new Error("Supabase is not configured. Set apps/web/.env.local first.");
+  }
+
   const {
     data: { session },
   } = await supabase.auth.getSession();

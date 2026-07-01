@@ -41,7 +41,7 @@ export const createUserSchema = z.object({
 });
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 
-/** One line of a supplier order: which item, how much by default. */
+/** One line of a supplier reminder: which item to check, with an optional usual amount hint. */
 export const orderRuleLineSchema = z.object({
   itemId: z.string().uuid(),
   defaultQuantity: z.number().positive().optional(),
@@ -52,14 +52,14 @@ export const orderRuleLineSchema = z.object({
 export type OrderRuleLineInput = z.infer<typeof orderRuleLineSchema>;
 
 /**
- * A recurring order to a single supplier — the whole basket is reminded as one
- * message. `cutoffTime` is the local deadline to place it; orders are expected
+ * A recurring supplier reminder — the item checklist is sent as one message.
+ * `cutoffTime` is the local deadline to handle it; orders are expected
  * to arrive `expectedDeliveryOffsetDays` later.
  */
 export const createOrderRuleSchema = z.object({
   supplierId: z.string().uuid(),
   assignedUserId: z.string().uuid(),
-  escalationUserId: z.string().uuid().optional(),
+  escalationUserId: z.string().uuid().nullable().optional(),
   reminderTimeOfDay: timeOfDaySchema,
   recurrence: recurrenceSchema,
   cutoffTime: timeOfDaySchema.optional(),

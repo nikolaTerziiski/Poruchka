@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { supabase, isSupabaseConfigured } from "@/lib/supabaseClient";
 import { useTr, useCommon } from "@/lib/i18n";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { Button } from "@/components/ds/Button";
@@ -24,6 +24,8 @@ const M = {
     and: "&",
     privacy: "Privacy Policy",
     notice: "Account created. Check your email to confirm, then sign in.",
+    notConfigured:
+      "Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in apps/web/.env.local.",
     createAccount: "Create account",
     creating: "Creating…",
     haveAccount: "Already have an account?",
@@ -41,6 +43,8 @@ const M = {
     and: "и",
     privacy: "Политиката за поверителност",
     notice: "Профилът е създаден. Проверете имейла си за потвърждение и след това влезте.",
+    notConfigured:
+      "Supabase не е конфигуриран. Задайте NEXT_PUBLIC_SUPABASE_URL и NEXT_PUBLIC_SUPABASE_ANON_KEY в apps/web/.env.local.",
     createAccount: "Създаване на профил",
     creating: "Създаване…",
     haveAccount: "Вече имате профил?",
@@ -67,6 +71,10 @@ export default function RegisterPage() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
+    if (!supabase) {
+      setError(t.notConfigured);
+      return;
+    }
     setError(null);
     setNotice(null);
     setLoading(true);
@@ -125,7 +133,7 @@ export default function RegisterPage() {
         />
         {error && <p style={{ fontSize: 13, color: "var(--red-600)", margin: 0 }}>{error}</p>}
         {notice && <p style={{ fontSize: 13, color: "var(--green-700)", margin: 0 }}>{notice}</p>}
-        <Button type="submit" variant="primary" size="lg" disabled={!canSubmit || loading} style={{ width: "100%", marginTop: 2 }}>
+        <Button type="submit" variant="primary" size="lg" disabled={!canSubmit || loading || !isSupabaseConfigured} style={{ width: "100%", marginTop: 2 }}>
           {loading ? t.creating : t.createAccount}
         </Button>
       </form>

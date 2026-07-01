@@ -13,13 +13,12 @@ export interface OrderLineCopy {
   note?: string | null;
 }
 
-/** One line of the order sheet, e.g. "• Pork Meat — 10 kg  📝 lean". */
-function formatLine(l: OrderLineCopy): string {
+/** One line of the order reminder. Quantities are optional "usual amount" hints. */
+function formatLine(lang: Lang, l: OrderLineCopy): string {
+  const usual = lang === "bg" ? "обичайно" : "usual";
   const qty =
     l.quantity != null
-      ? ` — ${l.quantity}${l.unit ? ` ${l.unit}` : ""}`
-      : l.unit
-        ? ` — ${l.unit}`
+      ? ` (${usual}: ${l.quantity}${l.unit ? ` ${l.unit}` : ""})`
         : "";
   const note = l.note && l.note.trim() ? `  📝 ${l.note.trim()}` : "";
   return `• ${l.name}${qty}${note}`;
@@ -30,13 +29,14 @@ export function orderReminderMessage(
   lang: string,
   p: { supplier: string; lines: OrderLineCopy[]; cutoffTime?: string | null },
 ): string {
-  const lines = p.lines.map(formatLine).join("\n");
-  if (L(lang) === "bg") {
+  const selectedLang = L(lang);
+  const lines = p.lines.map((line) => formatLine(selectedLang, line)).join("\n");
+  if (selectedLang === "bg") {
     const cutoff = p.cutoffTime ? `\n⏳ Подайте до ${p.cutoffTime}.` : "";
-    return `🛒 Време е за поръчка от ${p.supplier}:\n${lines}${cutoff}\nНатиснете „Готово“, след като я подадете.`;
+    return `🛒 Проверете поръчката към ${p.supplier}:\n${lines}${cutoff}\nНатиснете „Готово“, след като я обработите.`;
   }
   const cutoff = p.cutoffTime ? `\n⏳ Place it by ${p.cutoffTime}.` : "";
-  return `🛒 Time to order from ${p.supplier}:\n${lines}${cutoff}\nTap “Done” once you've placed the order.`;
+  return `🛒 Check the supplier order for ${p.supplier}:\n${lines}${cutoff}\nTap “Done” once you've handled it.`;
 }
 
 /** Label on the Done button. */
@@ -69,8 +69,8 @@ export function snoozeOptionLabel(lang: string, choice: SnoozeChoice): string {
 /** Chat message sent after the order is confirmed. */
 export function confirmedMessage(lang: string): string {
   return L(lang) === "bg"
-    ? "✅ Успешно подадено като „Поръчано“ — останалото можете да проверите в приложението."
-    : "✅ Successfully submitted as Ordered — you can check the rest in the app.";
+    ? "✅ Отбелязано като готово — можете да проследите състоянието в приложението."
+    : "✅ Marked as done — you can track the order status in the app.";
 }
 
 /** Short popup shown on the tapped Done button. */
