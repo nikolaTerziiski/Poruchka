@@ -22,10 +22,25 @@ export class SchedulerService {
   private readonly logger = new Logger(SchedulerService.name);
   private running = false;
 
+  /**
+   * Dev-only accelerated cadence for testing the reminder loop end to end:
+   * newly materialized runs send immediately, re-nudges fire every minute,
+   * and quiet hours are ignored. Enable with REMINDER_TEST_FAST=1 in the
+   * API env; it refuses to activate when NODE_ENV=production.
+   */
+  private readonly testFast =
+    process.env.REMINDER_TEST_FAST === "1" && process.env.NODE_ENV !== "production";
+
   constructor(
     private readonly prisma: PrismaService,
     @Inject(NOTIFICATION_CHANNEL) private readonly channel: NotificationChannel,
-  ) {}
+  ) {
+    if (this.testFast) {
+      this.logger.warn(
+        "REMINDER_TEST_FAST is ON — sending immediately, nudging every minute, ignoring quiet hours. Dev/testing only.",
+      );
+    }
+  }
 
   @Cron(CronExpression.EVERY_MINUTE)
   async tick(): Promise<void> {
@@ -86,7 +101,7 @@ export class SchedulerService {
             dueAt: dueAt.toJSDate(),
             expectedDeliveryDate,
             status: "PENDING",
-            nextNudgeAt: dueAt.toJSDate(),
+            nextNudgeAt: this.testFast ? DateTime.now().toJSDate() : dueAt.toJSDate(),
             lines: {
               create: rule.lines.map((l, i) => ({
                 itemId: l.itemId,
@@ -119,9 +134,10 @@ export class SchedulerService {
     for (const run of due) {
       const t = run.tenant;
       const nowLocal = DateTime.now().setZone(t.timezone);
+      const renudgeMin = this.testFast ? 1 : t.renudgeIntervalMin;
 
       // Quiet hours → defer to the next allowed time, don't send.
-      if (this.inQuietHours(nowLocal.hour, t.quietHoursStart, t.quietHoursEnd)) {
+      if (!this.testFast && this.inQuietHours(nowLocal.hour, t.quietHoursStart, t.quietHoursEnd)) {
         await this.prisma.orderRun.update({
           where: { id: run.id },
           data: { nextNudgeAt: this.nextAllowed(nowLocal, t.quietHoursEnd).toJSDate() },
@@ -134,7 +150,7 @@ export class SchedulerService {
         this.logger.warn(`OrderRun ${run.id}: assignee has no linked chat — deferring`);
         await this.prisma.orderRun.update({
           where: { id: run.id },
-          data: { nextNudgeAt: nowLocal.plus({ minutes: t.renudgeIntervalMin }).toJSDate() },
+          data: { nextNudgeAt: nowLocal.plus({ minutes: renudgeMin }).toJSDate() },
         });
         continue;
       }
@@ -173,7 +189,7 @@ export class SchedulerService {
           sentCount,
           lastSentAt: now,
           status: escalate ? "ESCALATED" : "PENDING",
-          nextNudgeAt: escalate ? null : nowLocal.plus({ minutes: t.renudgeIntervalMin }).toJSDate(),
+          nextNudgeAt: escalate ? null : nowLocal.plus({ minutes: renudgeMin }).toJSDate(),
         },
       });
       this.logger.log(

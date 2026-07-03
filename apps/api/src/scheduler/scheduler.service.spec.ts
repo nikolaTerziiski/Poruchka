@@ -149,3 +149,105 @@ describe("SchedulerService grouped order materialization", () => {
     });
   });
 });
+
+describe("SchedulerService REMINDER_TEST_FAST mode", () => {
+  const fixedNow = DateTime.fromISO("2026-07-01T10:00:00.000", { zone: "Europe/Sofia" });
+
+  function pendingRun(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "run-1",
+      sentCount: 0,
+      tenant: {
+        id: ids.tenant,
+        timezone: "Europe/Sofia",
+        language: "bg",
+        // Quiet hours covering "now" (10:00): normally nothing would send.
+        quietHoursStart: 9,
+        quietHoursEnd: 12,
+        renudgeIntervalMin: 60,
+        maxNudges: 5,
+      },
+      supplier: { name: "Metro" },
+      assignedUser: { id: ids.assignee, name: "Georgi", chatUserId: "555001" },
+      orderRule: { cutoffTime: null },
+      lines: [
+        { itemNameSnapshot: "Pork Meat", quantitySnapshot: 12, unitSnapshot: "kg", notesSnapshot: null, sortOrder: 0 },
+      ],
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    jest.spyOn(DateTime, "now").mockReturnValue(fixedNow as DateTime<true>);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    delete process.env.REMINDER_TEST_FAST;
+  });
+
+  it("materializes runs that send immediately instead of waiting for the reminder time", async () => {
+    process.env.REMINDER_TEST_FAST = "1";
+    const prisma = createPrismaMock();
+    prisma.tenant.findMany.mockResolvedValue([
+      { id: ids.tenant, timezone: "Europe/Sofia", orderRules: [activeRule()] },
+    ]);
+    prisma.orderRun.findUnique.mockResolvedValue(null);
+    prisma.orderRun.create.mockResolvedValue({ id: "run-new" });
+    prisma.orderRun.findMany.mockResolvedValue([]);
+    const service = createService(prisma);
+
+    await service.tick();
+
+    const created = prisma.orderRun.create.mock.calls[0][0].data;
+    // Rule time is 09:30 (already passed here, but the point holds for any
+    // future time): fast mode arms the nudge for NOW, not the rule's dueAt.
+    expect(created.nextNudgeAt).toEqual(fixedNow.toJSDate());
+  });
+
+  it("sends during quiet hours and re-arms the nudge one minute out", async () => {
+    process.env.REMINDER_TEST_FAST = "1";
+    const prisma = createPrismaMock();
+    prisma.tenant.findMany.mockResolvedValue([]);
+    prisma.orderRun.findMany.mockResolvedValue([pendingRun()]);
+    prisma.orderRun.update.mockResolvedValue({});
+    const channel: NotificationChannel = { channel: "telegram", send: jest.fn() };
+    const service = new SchedulerService(prisma as unknown as PrismaService, channel);
+
+    await service.tick();
+
+    expect(channel.send).toHaveBeenCalledTimes(1);
+    expect(prisma.orderRun.update).toHaveBeenCalledWith({
+      where: { id: "run-1" },
+      data: expect.objectContaining({
+        sentCount: 1,
+        nextNudgeAt: fixedNow.plus({ minutes: 1 }).toJSDate(),
+      }),
+    });
+  });
+
+  it("never activates in production even when the flag is set", async () => {
+    process.env.REMINDER_TEST_FAST = "1";
+    const prevEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      const prisma = createPrismaMock();
+      prisma.tenant.findMany.mockResolvedValue([]);
+      prisma.orderRun.findMany.mockResolvedValue([pendingRun()]);
+      prisma.orderRun.update.mockResolvedValue({});
+      const channel: NotificationChannel = { channel: "telegram", send: jest.fn() };
+      const service = new SchedulerService(prisma as unknown as PrismaService, channel);
+
+      await service.tick();
+
+      // Quiet hours apply again: deferred, nothing sent.
+      expect(channel.send).not.toHaveBeenCalled();
+      expect(prisma.orderRun.update).toHaveBeenCalledWith({
+        where: { id: "run-1" },
+        data: { nextNudgeAt: fixedNow.set({ hour: 12, minute: 0, second: 0, millisecond: 0 }).toJSDate() },
+      });
+    } finally {
+      process.env.NODE_ENV = prevEnv;
+    }
+  });
+});

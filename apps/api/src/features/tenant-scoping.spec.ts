@@ -62,7 +62,7 @@ describe("tenant-scoped resource mutations", () => {
         create: jest.fn(),
       },
     } as unknown as PrismaService;
-    const controller = new OrderRulesController(prisma);
+    const controller = new OrderRulesController(prisma, { channel: "telegram", send: jest.fn() });
 
     await expect(
       controller.create("tenant-a", {
@@ -99,7 +99,7 @@ describe("tenant-scoped resource mutations", () => {
         create: jest.fn(),
       },
     } as unknown as PrismaService;
-    const controller = new OrderRulesController(prisma);
+    const controller = new OrderRulesController(prisma, { channel: "telegram", send: jest.fn() });
 
     await expect(
       controller.create("tenant-a", {

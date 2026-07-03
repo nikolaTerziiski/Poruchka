@@ -39,6 +39,13 @@ export function orderReminderMessage(
   return `🛒 Check the supplier order for ${p.supplier}:\n${lines}${cutoff}\nTap “Done” once you've handled it.`;
 }
 
+/** Prefixed to a manually triggered test reminder so nobody mistakes it for a real order. */
+export function testReminderIntro(lang: string): string {
+  return L(lang) === "bg"
+    ? "🧪 Тестово напомняне — така ще изглежда поръчката:"
+    : "🧪 Test reminder — this is how the order will look:";
+}
+
 /** Label on the Done button. */
 export function doneButtonLabel(lang: string): string {
   return L(lang) === "bg" ? "✅ Готово" : "✅ Done";

@@ -186,6 +186,11 @@ pnpm --filter @poruchka/api db:seed  # idempotent pilot seed
 ```
 
 - **Web admin runs on port 3002** (port 3000 is used by another local app).
+- **Testing the reminder loop:** every order plan row has a "send test reminder" button
+  (sends that plan's real order sheet to *your own* linked Telegram, marked as a test).
+  For end-to-end cadence testing, start the API with `REMINDER_TEST_FAST=1` — new runs
+  send immediately, re-nudges fire every minute, quiet hours are ignored. Dev-only:
+  the flag is hard-disabled when `NODE_ENV=production`.
 - Secrets live in gitignored env files (`apps/api/.env`, `apps/web/.env.local`); **never** commit
   real keys — `.env.example` holds placeholders only. The web app needs
   `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (public), `NEXT_PUBLIC_API_URL`.

@@ -38,8 +38,15 @@ function createPrismaMock() {
   };
 }
 
-function controllerFor(prisma: ReturnType<typeof createPrismaMock>) {
-  return new OrderRulesController(prisma as unknown as PrismaService);
+function createChannelMock() {
+  return { channel: "telegram" as const, send: jest.fn() };
+}
+
+function controllerFor(
+  prisma: ReturnType<typeof createPrismaMock>,
+  channel: ReturnType<typeof createChannelMock> = createChannelMock(),
+) {
+  return new OrderRulesController(prisma as unknown as PrismaService, channel);
 }
 
 function mockValidRefs(
@@ -461,5 +468,73 @@ describe("OrderRulesController grouped order behavior", () => {
 
     expect(prisma.orderRule.update).not.toHaveBeenCalled();
     expect(prisma.orderRule.delete).not.toHaveBeenCalled();
+  });
+});
+
+describe("OrderRulesController test reminder", () => {
+  const caller = { id: "00000000-0000-0000-0000-000000000009", chatUserId: "555001" };
+
+  function testableRule() {
+    return {
+      id: ids.rule,
+      cutoffTime: "14:00",
+      supplier: { name: "Metro" },
+      tenant: { language: "bg" },
+      lines: [
+        {
+          defaultQuantity: 20,
+          unit: "кг",
+          notes: null,
+          item: { name: "Свинско месо", unit: "кг", notes: "постно" },
+        },
+      ],
+    };
+  }
+
+  it("sends the rule's order sheet to the caller's own chat, marked as a test", async () => {
+    const prisma = createPrismaMock();
+    prisma.orderRule.findFirst.mockResolvedValue(testableRule());
+    const channel = createChannelMock();
+    const controller = controllerFor(prisma, channel);
+
+    await expect(controller.testReminder(ids.tenant, caller, ids.rule)).resolves.toEqual({
+      sent: true,
+    });
+
+    expect(prisma.orderRule.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: ids.rule, tenantId: ids.tenant, archivedAt: null } }),
+    );
+    expect(channel.send).toHaveBeenCalledTimes(1);
+    const sent = channel.send.mock.calls[0][0];
+    expect(sent.chatUserId).toBe(caller.chatUserId);
+    expect(sent.text).toContain("Тестово напомняне");
+    expect(sent.text).toContain("Metro");
+    expect(sent.text).toContain("Свинско месо");
+    expect(sent.text).toContain("14:00");
+    expect(sent.buttons).toEqual([{ label: "✅ Готово", payload: "order:test" }]);
+  });
+
+  it("rejects when the caller has no linked chat, without sending", async () => {
+    const prisma = createPrismaMock();
+    prisma.orderRule.findFirst.mockResolvedValue(testableRule());
+    const channel = createChannelMock();
+    const controller = controllerFor(prisma, channel);
+
+    await expect(
+      controller.testReminder(ids.tenant, { id: caller.id, chatUserId: null }, ids.rule),
+    ).rejects.toThrow(BadRequestException);
+    expect(channel.send).not.toHaveBeenCalled();
+  });
+
+  it("404s for another tenant's rule", async () => {
+    const prisma = createPrismaMock();
+    prisma.orderRule.findFirst.mockResolvedValue(null);
+    const channel = createChannelMock();
+    const controller = controllerFor(prisma, channel);
+
+    await expect(controller.testReminder(ids.tenant, caller, ids.rule)).rejects.toThrow(
+      NotFoundException,
+    );
+    expect(channel.send).not.toHaveBeenCalled();
   });
 });

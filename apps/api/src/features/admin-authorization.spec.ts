@@ -35,7 +35,7 @@ describe("administrative mutation authorization metadata", () => {
   });
 
   it("allows owners and managers to manage order rules", () => {
-    for (const method of ["create", "update", "remove"]) {
+    for (const method of ["create", "update", "remove", "testReminder"]) {
       expect(rolesFor(OrderRulesController, method)).toEqual(["OWNER", "MANAGER"]);
     }
   });

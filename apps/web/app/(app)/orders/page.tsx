@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, ChevronDown, ChevronUp, Plus, Pencil, Trash2, Repeat } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Plus, Pencil, Send, Trash2, Repeat } from "lucide-react";
 import { Button } from "@/components/ds/Button";
 import { Field } from "@/components/ds/Field";
 import { Select } from "@/components/ds/Select";
@@ -158,6 +158,8 @@ const M = {
     pause: "Pause order plan",
     activate: "Activate order plan",
     edit: "Edit order plan",
+    testAria: "Send a test reminder to your Telegram",
+    testFailedHint: "Test failed — is your Telegram linked?",
     deleteAria: "Archive order plan",
     archiveTitle: "Archive this order plan?",
     archiveDesc: "Future reminders stop, but existing order history stays visible.",
@@ -227,6 +229,8 @@ const M = {
     pause: "Постави плана на пауза",
     activate: "Активирай плана",
     edit: "Редактирай плана",
+    testAria: "Изпрати тестово напомняне към вашия Telegram",
+    testFailedHint: "Тестът не успя — свързан ли е вашият Telegram?",
     deleteAria: "Архивирай плана",
     archiveTitle: "Да архивираме ли този план?",
     archiveDesc: "Бъдещите напомняния спират, но историята на поръчките остава видима.",
@@ -291,6 +295,7 @@ export default function SchedulesPage() {
   const [editing, setEditing] = useState<OrderRule | null>(null);
   const [creating, setCreating] = useState(false);
   const [archiving, setArchiving] = useState<OrderRule | null>(null);
+  const [testState, setTestState] = useState<{ id: string; ok: boolean } | null>(null);
 
   const refetch = useCallback(async () => {
     setRules(await api<OrderRule[]>("/order-rules"));
@@ -322,6 +327,17 @@ export default function SchedulesPage() {
   }, [load]);
 
   const missingBasics = suppliers.length === 0 || items.length === 0 || team.length === 0;
+
+  async function sendTestReminder(rule: OrderRule) {
+    setTestState(null);
+    try {
+      await api(`/order-rules/${rule.id}/test-reminder`, { method: "POST" });
+      setTestState({ id: rule.id, ok: true });
+    } catch {
+      setTestState({ id: rule.id, ok: false });
+    }
+    window.setTimeout(() => setTestState(null), 2600);
+  }
 
   async function toggleActive(rule: OrderRule) {
     await api(`/order-rules/${rule.id}`, {
@@ -395,7 +411,7 @@ export default function SchedulesPage() {
             { key: "time", label: t.colTime, width: 110 },
             { key: "assignee", label: t.colResponsible },
             { key: "active", label: t.colActive, align: "center", width: 90 },
-            { key: "actions", label: "", align: "right", width: 90 },
+            { key: "actions", label: "", align: "right", width: 122 },
           ]}
           rows={rules}
           rowKey={(r) => r.id}
@@ -430,6 +446,24 @@ export default function SchedulesPage() {
               );
             return (
               <div style={{ display: "inline-flex", gap: 4, justifyContent: "flex-end" }}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={
+                    testState?.id === r.id ? (
+                      testState.ok ? (
+                        <Check size={15} color="var(--status-confirmed-dot)" />
+                      ) : (
+                        <Send size={15} color="var(--red-500)" />
+                      )
+                    ) : (
+                      <Send size={15} />
+                    )
+                  }
+                  aria-label={t.testAria}
+                  title={testState?.id === r.id && !testState.ok ? t.testFailedHint : t.testAria}
+                  onClick={() => void sendTestReminder(r)}
+                />
                 <Button
                   variant="ghost"
                   size="sm"
