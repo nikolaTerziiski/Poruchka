@@ -8,6 +8,7 @@ import { ItemsController } from "./items.controller";
 import { OrderRulesController } from "./order-rules.controller";
 import { TeamController } from "./team.controller";
 import { OrdersController } from "./orders.controller";
+import { SettingsController } from "./settings.controller";
 
 @Module({
   imports: [ChannelsModule],
@@ -18,6 +19,7 @@ import { OrdersController } from "./orders.controller";
     OrderRulesController,
     TeamController,
     OrdersController,
+    SettingsController,
   ],
   providers: [SupabaseAuthGuard, RolesGuard],
 })

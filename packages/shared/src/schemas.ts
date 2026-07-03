@@ -67,3 +67,27 @@ export const createOrderRuleSchema = z.object({
   lines: z.array(orderRuleLineSchema).min(1),
 });
 export type CreateOrderRuleInput = z.infer<typeof createOrderRuleSchema>;
+
+/**
+ * Tenant-wide settings, all optional (PATCH semantics). Quiet hours are local
+ * hours 0-23; start === end means quiet hours are disabled, start > end wraps
+ * overnight. Timezone is any IANA id — semantic validity is checked API-side.
+ */
+export const updateTenantSettingsSchema = z
+  .object({
+    name: z.string().min(1),
+    timezone: z.string().min(1),
+    language: z.enum(["bg", "en"]),
+    quietHoursStart: z.number().int().min(0).max(23),
+    quietHoursEnd: z.number().int().min(0).max(23),
+    renudgeIntervalMin: z.number().int().min(5).max(720),
+    maxNudges: z.number().int().min(1).max(20),
+  })
+  .partial();
+export type UpdateTenantSettingsInput = z.infer<typeof updateTenantSettingsSchema>;
+
+/** Self-service profile update (the caller's own User row). */
+export const updateMeSchema = z.object({
+  name: z.string().min(1),
+});
+export type UpdateMeInput = z.infer<typeof updateMeSchema>;

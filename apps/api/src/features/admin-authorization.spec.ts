@@ -1,7 +1,9 @@
 import "reflect-metadata";
 import { ROLES_KEY } from "../auth/roles.decorator";
 import { ItemsController } from "./items.controller";
+import { MeController } from "./me.controller";
 import { OrderRulesController } from "./order-rules.controller";
+import { SettingsController } from "./settings.controller";
 import { SuppliersController } from "./suppliers.controller";
 import { TeamController } from "./team.controller";
 
@@ -40,5 +42,13 @@ describe("administrative mutation authorization metadata", () => {
 
   it("does not require mutation roles for order-rule listing", () => {
     expect(rolesFor(OrderRulesController, "list")).toEqual([]);
+  });
+
+  it("limits tenant settings updates to owners and managers", () => {
+    expect(rolesFor(SettingsController, "update")).toEqual(["OWNER", "MANAGER"]);
+  });
+
+  it("keeps own-profile updates open to every role", () => {
+    expect(rolesFor(MeController, "update")).toEqual([]);
   });
 });
