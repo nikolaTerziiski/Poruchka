@@ -10,11 +10,14 @@ export interface DialogProps {
   children?: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
+  secondaryLabel?: string;
   tone?: "default" | "danger";
   confirmDisabled?: boolean;
+  secondaryDisabled?: boolean;
   busy?: boolean;
   onConfirm?: () => void;
   onCancel?: () => void;
+  onSecondary?: () => void;
   width?: number;
 }
 
@@ -26,11 +29,14 @@ export function Dialog({
   children,
   confirmLabel = "Save",
   cancelLabel = "Cancel",
+  secondaryLabel,
   tone = "default",
   confirmDisabled = false,
+  secondaryDisabled = false,
   busy = false,
   onConfirm,
   onCancel,
+  onSecondary,
   width = 460,
 }: DialogProps) {
   if (!open) return null;
@@ -55,7 +61,9 @@ export function Dialog({
         onClick={(e) => e.stopPropagation()}
         style={{
           width,
-          maxWidth: "100%",
+          maxWidth: "calc(100vw - 40px)",
+          maxHeight: "calc(100vh - 40px)",
+          overflowY: "auto",
           background: "var(--surface-card)",
           border: "1px solid var(--border-subtle)",
           borderRadius: "var(--radius-2xl)",
@@ -74,6 +82,9 @@ export function Dialog({
         {children ? <div style={{ marginTop: 18 }}>{children}</div> : null}
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 24 }}>
           <Button variant="ghost" onClick={onCancel} disabled={busy}>{cancelLabel}</Button>
+          {secondaryLabel ? (
+            <Button variant="ghost" onClick={onSecondary} disabled={secondaryDisabled || busy}>{secondaryLabel}</Button>
+          ) : null}
           <Button variant={tone === "danger" ? "danger" : "primary"} onClick={onConfirm} disabled={confirmDisabled || busy}>
             {busy ? "Working…" : confirmLabel}
           </Button>

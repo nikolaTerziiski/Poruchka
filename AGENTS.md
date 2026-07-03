@@ -99,19 +99,18 @@ packages/
 | `/reset-password` | **Reset password** | New password + confirm (from email link). |
 | `/terms`, `/privacy` | **Legal** | Required for the registration agreement checkbox. |
 
-### App (authenticated) — **left sidebar shell**
+### App (authenticated) — **left sidebar shell** (4 primary sections + Settings in the footer)
 | Route | Page | Key elements |
 |-------|------|--------------|
 | `/onboarding` | **Onboarding** (first run) | Name your restaurant, set timezone — only if no tenant yet. |
-| `/dashboard` | **Calendar** (home) | Month/week order calendar; each day shows due items, supplier, assignee, status (pending/confirmed/escalated). |
-| `/suppliers` | **Suppliers** | Table + create/edit/delete (e.g. Metro). |
-| `/items` | **Items / Menu** | Table + create/edit/delete; choose supplier + unit. |
-| `/schedules` | **Schedules** | Table + create/edit; choose item, responsible person, **recurrence picker** (daily / weekly weekday‑picker / every‑N‑days), time of day. |
+| `/dashboard` | **Overview** (home) | Today‑first: attention strip for escalated orders, today's orders with a live status timeline (sent / postponed / confirmed by whom), clickable 7‑day week strip. |
+| `/orders` | **Orders** | Order plans (OrderRule) list + create/edit wizard: supplier, items with usual quantities, responsible person, **recurrence picker** (daily / weekly / every‑N‑days), time of day, cutoff, escalation. |
+| `/catalog` | **Catalog** | Suppliers + items merged, master–detail: supplier list left; detail pane with contact, "used in N order plans", and that supplier's items (inline CRUD). |
 | `/team` | **Team** | List people; add staff; **"Connect Telegram"** (shows deep link / QR); remove. |
-| `/settings` | **Notifications** | Quiet hours, re‑nudge interval, max nudges, timezone. |
-| `/profile` | **Profile / Account** | Name, email, password change, sign out. |
+| `/settings` | **Settings** | Quiet hours, re‑nudge interval, max nudges, timezone (notification settings; account section planned). |
 
-**Logout** is a button in the sidebar footer (not a page). **Sign out** also available on Profile.
+Old routes `/schedules`, `/suppliers`, `/items`, `/profile` redirect to the new IA (see `next.config.mjs`).
+**Logout** is a button in the sidebar footer (not a page), next to the Settings link and the signed‑in identity block.
 
 ---
 
@@ -119,8 +118,10 @@ packages/
 
 - **Public pages** use a **top horizontal navbar**: logo left; `Login` (text) + `Register`
   (solid primary button) right. **No left sidebar on marketing pages.**
-- **App pages** use a **persistent left sidebar** (Calendar, Suppliers, Items, Schedules, Team,
-  Notifications, Profile) with the signed‑in email + Sign out in the footer.
+- **App pages** use a **persistent left sidebar** with four primary sections (Overview, Orders,
+  Catalog, Team); Settings, the signed‑in identity, and Sign out live in the sidebar footer.
+  Rationale: nav mirrors the user's mental model, not the DB schema — thin set‑once pages stay
+  out of primary navigation.
 - **Mobile:**
   - App sidebar is **hidden by default and opens via a ☰ (hamburger)** as a slide‑in drawer
     with a dimmed backdrop; closes on navigation or backdrop tap.

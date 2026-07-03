@@ -4,12 +4,11 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  CalendarDays,
+  LayoutDashboard,
+  ClipboardList,
   Store,
-  Package,
-  Repeat,
   Users,
-  Bell,
+  Settings,
   LogOut,
   Menu,
   X,
@@ -18,25 +17,24 @@ import { supabase, isSupabaseConfigured } from "@/lib/supabaseClient";
 import { useTr } from "@/lib/i18n";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
-type NavKey = "calendar" | "suppliers" | "items" | "schedules" | "team" | "notifications";
+type NavKey = "overview" | "orders" | "catalog" | "team";
 
-const NAV: { href: string; key: NavKey; Icon: typeof CalendarDays }[] = [
-  { href: "/dashboard", key: "calendar", Icon: CalendarDays },
-  { href: "/suppliers", key: "suppliers", Icon: Store },
-  { href: "/items", key: "items", Icon: Package },
-  { href: "/schedules", key: "schedules", Icon: Repeat },
+const NAV: { href: string; key: NavKey; Icon: typeof LayoutDashboard }[] = [
+  { href: "/dashboard", key: "overview", Icon: LayoutDashboard },
+  { href: "/orders", key: "orders", Icon: ClipboardList },
+  { href: "/catalog", key: "catalog", Icon: Store },
   { href: "/team", key: "team", Icon: Users },
-  { href: "/settings", key: "notifications", Icon: Bell },
 ];
+
+const SESSION_TIMEOUT_MS = 8000;
 
 const M = {
   en: {
-    calendar: "Calendar",
-    suppliers: "Suppliers",
-    items: "Items",
-    schedules: "Order plans",
+    overview: "Overview",
+    orders: "Orders",
+    catalog: "Catalog",
     team: "Team",
-    notifications: "Notifications",
+    settings: "Settings",
     loading: "Loading…",
     yourRestaurant: "Your restaurant",
     signOut: "Sign out",
@@ -44,12 +42,11 @@ const M = {
     closeMenu: "Close menu",
   },
   bg: {
-    calendar: "Календар",
-    suppliers: "Доставчици",
-    items: "Артикули",
-    schedules: "Планове",
+    overview: "Преглед",
+    orders: "Поръчки",
+    catalog: "Каталог",
     team: "Екип",
-    notifications: "Известия",
+    settings: "Настройки",
     loading: "Зареждане…",
     yourRestaurant: "Вашият ресторант",
     signOut: "Изход",
@@ -73,20 +70,52 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       return;
     }
     if (!supabase) return;
-    supabase.auth.getSession().then(({ data }) => {
-      if (!data.session) {
+    const client = supabase;
+    let cancelled = false;
+
+    async function resolveSession() {
+      try {
+        const result = await Promise.race([
+          client.auth.getSession(),
+          new Promise<"timeout">((resolve) => {
+            window.setTimeout(() => resolve("timeout"), SESSION_TIMEOUT_MS);
+          }),
+        ]);
+        if (cancelled) return;
+        if (result === "timeout" || !result.data.session) {
+          setReady(true);
+          router.replace("/login");
+          return;
+        }
+        setEmail(result.data.session.user.email ?? null);
+        const rn = (result.data.session.user.user_metadata as { restaurant_name?: string })?.restaurant_name;
+        if (rn) setRestaurant(rn);
+        setReady(true);
+      } catch {
+        if (!cancelled) {
+          setReady(true);
+          router.replace("/login");
+        }
+      }
+    }
+
+    void resolveSession();
+    // Also fires on USER_UPDATED (email change, restaurant rename) — keep the
+    // sidebar identity fresh. Must stay synchronous: awaiting supabase calls
+    // inside this callback can deadlock the client.
+    const { data: sub } = client.auth.onAuthStateChange((_e, session) => {
+      if (!session) {
         router.replace("/login");
         return;
       }
-      setEmail(data.session.user.email ?? null);
-      const rn = (data.session.user.user_metadata as { restaurant_name?: string })?.restaurant_name;
+      setEmail(session.user.email ?? null);
+      const rn = (session.user.user_metadata as { restaurant_name?: string })?.restaurant_name;
       if (rn) setRestaurant(rn);
-      setReady(true);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-      if (!session) router.replace("/login");
-    });
-    return () => sub.subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      sub.subscription.unsubscribe();
+    };
   }, [router]);
 
   useEffect(() => {
@@ -117,7 +146,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       .join("")
       .toUpperCase() || "P";
 
-  const isProfile = pathname === "/profile";
+  const isSettings = pathname === "/settings";
 
   return (
     <div className="app-root">
@@ -167,7 +196,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
         <nav style={{ flex: 1, padding: "4px 12px", display: "flex", flexDirection: "column", gap: 2 }}>
           {NAV.map(({ href, key, Icon }) => {
-            const on = pathname === href;
+            const on = pathname === href || pathname.startsWith(`${href}/`);
             return (
               <Link
                 key={href}
@@ -193,7 +222,24 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div style={{ borderTop: "1px solid var(--border-subtle)", padding: 12 }}>
-          <Link href="/profile" style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: "var(--radius-md)", textDecoration: "none", background: isProfile ? "var(--brand-50)" : "transparent" }}>
+          <Link
+            href="/settings"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 11,
+              padding: "8px 10px",
+              borderRadius: "var(--radius-md)",
+              textDecoration: "none",
+              fontSize: 13.5,
+              fontWeight: isSettings ? 600 : 500,
+              background: isSettings ? "var(--brand-50)" : "transparent",
+              color: isSettings ? "var(--brand-700)" : "var(--text-body)",
+            }}
+          >
+            <Settings size={16} color={isSettings ? "var(--brand-600)" : "var(--text-muted)"} /> {t.settings}
+          </Link>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px" }}>
             <span style={{ width: 30, height: 30, borderRadius: "var(--radius-pill)", background: "var(--brand-100)", color: "var(--brand-700)", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 600, flex: "none" }}>
               {initials}
             </span>
@@ -201,7 +247,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: "var(--text-strong)", whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>{displayName}</span>
               <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>{email ?? ""}</span>
             </span>
-          </Link>
+          </div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6, paddingLeft: 4 }}>
             <button
               onClick={signOut}

@@ -19,7 +19,16 @@ interface OrderOccurrence {
   assignee: string;
   time: string;
   status: string;
+  cutoffTime: string | null;
   expectedDeliveryDate: string | null;
+  /// Delivery timeline (only meaningful once a run exists; zero/null before).
+  sentCount: number;
+  lastSentAt: string | null;
+  nextNudgeAt: string | null;
+  postponedCount: number;
+  postponedUntil: string | null;
+  submittedAt: string | null;
+  submittedBy: string | null;
   lines: OrderOccurrenceLine[];
 }
 
@@ -55,6 +64,8 @@ export class OrdersController {
         include: {
           supplier: { select: { name: true } },
           assignedUser: { select: { name: true } },
+          submittedByUser: { select: { name: true } },
+          orderRule: { select: { cutoffTime: true } },
           lines: { orderBy: { sortOrder: "asc" } },
         },
       }),
@@ -73,9 +84,17 @@ export class OrdersController {
         assignee: run.assignedUser.name,
         time: DateTime.fromJSDate(run.dueAt).setZone(zone).toFormat("HH:mm"),
         status: run.status.toLowerCase(),
+        cutoffTime: run.orderRule.cutoffTime,
         expectedDeliveryDate: run.expectedDeliveryDate
           ? DateTime.fromJSDate(run.expectedDeliveryDate, { zone }).toISODate()
           : null,
+        sentCount: run.sentCount,
+        lastSentAt: run.lastSentAt?.toISOString() ?? null,
+        nextNudgeAt: run.nextNudgeAt?.toISOString() ?? null,
+        postponedCount: run.postponedCount,
+        postponedUntil: run.postponedUntil?.toISOString() ?? null,
+        submittedAt: run.submittedAt?.toISOString() ?? null,
+        submittedBy: run.submittedByUser?.name ?? null,
         lines: run.lines.map((l) => ({
           item: l.itemNameSnapshot,
           quantity: l.quantitySnapshot,
@@ -102,7 +121,15 @@ export class OrdersController {
           assignee: rule.assignedUser.name,
           time: rule.reminderTimeOfDay,
           status: "pending",
+          cutoffTime: rule.cutoffTime,
           expectedDeliveryDate: null,
+          sentCount: 0,
+          lastSentAt: null,
+          nextNudgeAt: null,
+          postponedCount: 0,
+          postponedUntil: null,
+          submittedAt: null,
+          submittedBy: null,
           lines,
         });
       }
