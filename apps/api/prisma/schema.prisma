@@ -1,5 +1,13 @@
 // Poruchka data model — multi-tenant from day one.
-// RLS policies are added in a separate SQL migration (see prisma/migrations).
+//
+// TENANT ISOLATION: currently enforced ENTIRELY in the application layer — every
+// query filters by tenantId (via the TenantId decorator + ensureOwned/getOwned).
+// Postgres RLS is NOT yet in force: some order tables have ROW LEVEL SECURITY
+// enabled but there are no CREATE POLICY statements, and the app connects as the
+// table owner (which bypasses RLS). Do not rely on the database as a tenant
+// backstop until real policies + a per-request tenant GUC are added. See
+// docs/AUDIT-2026-07-31.md §3 for the plan to make RLS real before onboarding a
+// second tenant.
 
 generator client {
   provider = "prisma-client-js"
@@ -23,11 +31,14 @@ enum ChatChannel {
   WHATSAPP
 }
 
-enum ReminderStatus {
+enum OrderRunStatus {
   PENDING
-  CONFIRMED
+  SUBMITTED
   ESCALATED
-  CANCELLED
+  SKIPPED
+  CONFIRMED
+  PARTIALLY_RECEIVED
+  RECEIVED
 }
 
 /// A restaurant. Top-level tenant; everything else is scoped to it.
@@ -43,12 +54,12 @@ model Tenant {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  users     User[]
-  suppliers Supplier[]
-  items     Item[]
-  schedules Schedule[]
-  reminders ReminderInstance[]
-  messages  MessageLog[]
+  users      User[]
+  suppliers  Supplier[]
+  items      Item[]
+  orderRules OrderRule[]
+  orderRuns  OrderRun[]
+  messages   MessageLog[]
 
   @@map("tenants")
 }
@@ -66,11 +77,13 @@ model User {
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
 
-  schedules          Schedule[]
-  confirmedReminders ReminderInstance[] @relation("ConfirmedBy")
+  assignedOrderRules   OrderRule[] @relation("OrderRuleAssignee")
+  escalationOrderRules OrderRule[] @relation("OrderRuleEscalation")
+  assignedOrderRuns    OrderRun[]  @relation("OrderRunAssignee")
+  submittedOrderRuns   OrderRun[]  @relation("OrderRunSubmitter")
 
   @@index([tenantId])
-  @@index([tenantId, chatChannel, chatUserId])
+  @@unique([tenantId, chatChannel, chatUserId])
   @@map("users")
 }
 
@@ -83,7 +96,9 @@ model Supplier {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  items Item[]
+  items      Item[]
+  orderRules OrderRule[]
+  orderRuns  OrderRun[]
 
   @@index([tenantId])
   @@map("suppliers")
@@ -101,57 +116,132 @@ model Item {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  schedules Schedule[]
+  orderRuleLines OrderRuleLine[]
+  orderRunLines  OrderRunLine[]
 
   @@index([tenantId])
   @@index([supplierId])
   @@map("items")
 }
 
-/// When and how often an item must be ordered, and who is responsible.
-model Schedule {
-  id                String   @id @default(uuid()) @db.Uuid
-  tenantId          String   @db.Uuid
-  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  itemId            String   @db.Uuid
-  item              Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  assignedUserId    String   @db.Uuid
-  assignedUser      User     @relation(fields: [assignedUserId], references: [id], onDelete: Restrict)
-  reminderTimeOfDay String // "HH:mm" in the tenant's timezone
-  recurrence        Json // discriminated union, validated by zod in the app layer
-  active            Boolean  @default(true)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+/// A recurring supplier order plan. Lines are grouped because restaurants place
+/// one order with a supplier, not one independent order per item.
+model OrderRule {
+  id                         String    @id @default(uuid()) @db.Uuid
+  tenantId                   String    @db.Uuid
+  supplierId                 String    @db.Uuid
+  assignedUserId             String    @db.Uuid
+  escalationUserId           String?   @db.Uuid
+  reminderTimeOfDay          String
+  recurrence                 Json
+  cutoffTime                 String?
+  expectedDeliveryOffsetDays Int?
+  active                     Boolean   @default(true)
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+  archivedAt                 DateTime?
 
-  reminders ReminderInstance[]
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  supplier       Supplier        @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  assignedUser   User            @relation("OrderRuleAssignee", fields: [assignedUserId], references: [id], onDelete: Restrict)
+  escalationUser User?           @relation("OrderRuleEscalation", fields: [escalationUserId], references: [id], onDelete: SetNull)
+  lines          OrderRuleLine[]
+  runs           OrderRun[]
 
   @@index([tenantId])
-  @@index([itemId])
-  @@map("schedules")
+  @@index([tenantId, archivedAt])
+  @@index([supplierId])
+  @@index([assignedUserId])
+  @@index([escalationUserId])
+  @@map("order_rules")
 }
 
-/// A concrete occurrence for one day. The scheduler drives this; the calendar reads it.
-model ReminderInstance {
-  id                String         @id @default(uuid()) @db.Uuid
-  tenantId          String         @db.Uuid
-  tenant            Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  scheduleId        String         @db.Uuid
-  schedule          Schedule       @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
-  dueDate           DateTime       @db.Date
-  status            ReminderStatus @default(PENDING)
-  sentCount         Int            @default(0)
-  lastSentAt        DateTime?
-  nextNudgeAt       DateTime?
-  confirmedAt       DateTime?
-  confirmedByUserId String?        @db.Uuid
-  confirmedByUser   User?          @relation("ConfirmedBy", fields: [confirmedByUserId], references: [id])
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
+model OrderRuleLine {
+  id              String   @id @default(uuid()) @db.Uuid
+  orderRuleId     String   @db.Uuid
+  itemId          String   @db.Uuid
+  defaultQuantity Decimal? @db.Decimal(12, 3)
+  unit            String?
+  notes           String?
+  sortOrder       Int      @default(0)
 
-  @@unique([scheduleId, dueDate]) // makes materialization idempotent
+  orderRule OrderRule @relation(fields: [orderRuleId], references: [id], onDelete: Cascade)
+  item      Item      @relation(fields: [itemId], references: [id], onDelete: Restrict)
+
+  @@unique([orderRuleId, itemId])
+  @@index([orderRuleId])
+  @@index([itemId])
+  @@map("order_rule_lines")
+}
+
+/// One due supplier order. Item data is snapshotted so historical orders stay
+/// truthful when catalog items or recurring plans change later.
+model OrderRun {
+  id                   String         @id @default(uuid()) @db.Uuid
+  tenantId             String         @db.Uuid
+  orderRuleId          String         @db.Uuid
+  supplierId           String         @db.Uuid
+  assignedUserId       String         @db.Uuid
+  dueDate              DateTime       @db.Date
+  dueAt                DateTime
+  expectedDeliveryDate DateTime?      @db.Date
+  status               OrderRunStatus @default(PENDING)
+  sentCount            Int            @default(0)
+  lastSentAt           DateTime?
+  nextNudgeAt          DateTime?
+  postponedCount       Int            @default(0)
+  lastPostponedAt      DateTime?
+  postponedUntil       DateTime?
+  submittedAt          DateTime?
+  submittedByUserId    String?        @db.Uuid
+  skipReason           String?
+  supplierConfirmedAt  DateTime?
+  supplierReference    String?
+  receivedAt           DateTime?
+  receivingNote        String?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  // Restrict (not Cascade): an OrderRun is the system-of-record for a placed order
+  // (prices, receipts, supplier refs). Deleting a plan must never erase order history.
+  orderRule       OrderRule      @relation(fields: [orderRuleId], references: [id], onDelete: Restrict)
+  supplier        Supplier       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  assignedUser    User           @relation("OrderRunAssignee", fields: [assignedUserId], references: [id], onDelete: Restrict)
+  submittedByUser User?          @relation("OrderRunSubmitter", fields: [submittedByUserId], references: [id], onDelete: SetNull)
+  lines           OrderRunLine[]
+
+  @@unique([orderRuleId, dueDate])
   @@index([tenantId])
+  @@index([tenantId, dueDate])
   @@index([status, nextNudgeAt])
-  @@map("reminder_instances")
+  @@index([supplierId])
+  @@index([assignedUserId])
+  @@index([submittedByUserId])
+  @@map("order_runs")
+}
+
+model OrderRunLine {
+  id               String   @id @default(uuid()) @db.Uuid
+  orderRunId       String   @db.Uuid
+  itemId           String   @db.Uuid
+  itemNameSnapshot String
+  quantitySnapshot Decimal? @db.Decimal(12, 3)
+  unitSnapshot     String?
+  notesSnapshot    String?
+  receivedQuantity Decimal? @db.Decimal(12, 3)
+  unitPrice        Decimal? @db.Decimal(12, 2)
+  exceptionType    String?
+  exceptionNote    String?
+  sortOrder        Int      @default(0)
+
+  orderRun OrderRun @relation(fields: [orderRunId], references: [id], onDelete: Cascade)
+  item     Item     @relation(fields: [itemId], references: [id], onDelete: Restrict)
+
+  @@unique([orderRunId, itemId])
+  @@index([orderRunId])
+  @@index([itemId])
+  @@map("order_run_lines")
 }
 
 /// Audit trail of inbound/outbound chat messages, for debugging.

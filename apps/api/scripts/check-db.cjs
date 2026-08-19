@@ -28,9 +28,24 @@ const prisma = new PrismaClient();
     const tables = await prisma.$queryRawUnsafe(
       "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name",
     );
-    console.log("Public tables:", tables.map((t) => t.table_name).join(", "));
+    const tableNames = new Set(tables.map((t) => t.table_name));
+    const required = [
+      "tenants",
+      "users",
+      "suppliers",
+      "items",
+      "order_rules",
+      "order_rule_lines",
+      "order_runs",
+      "order_run_lines",
+      "message_logs",
+    ];
+    const missing = required.filter((name) => !tableNames.has(name));
+    if (missing.length) throw new Error(`Missing required tables: ${missing.join(", ")}`);
+    console.log("Required tables present:", required.join(", "));
     // .count() exercises the runtime DATABASE_URL (transaction pooler, 6543).
     console.log("tenant.count() via pooler =", await prisma.tenant.count());
+    console.log("orderRule.count() via pooler =", await prisma.orderRule.count());
     console.log("DB VERIFY OK");
   } catch (e) {
     console.error("DB VERIFY FAILED:", e.message);

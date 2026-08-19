@@ -1,4 +1,16 @@
-import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  ConflictException,
+  Controller,
+  Delete,
+  Get,
+  NotFoundException,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { createSupplierSchema } from "@poruchka/shared";
 import { SupabaseAuthGuard } from "../auth/supabase-auth.guard";
 import { TenantId } from "../auth/request-context";
@@ -36,7 +48,19 @@ export class SuppliersController {
   @Delete(":id")
   async remove(@TenantId() tenantId: string, @Param("id") id: string) {
     await this.ensureOwned(tenantId, id);
-    await this.prisma.supplier.delete({ where: { id } });
+    try {
+      await this.prisma.supplier.delete({ where: { id } });
+    } catch (error) {
+      // Item.supplierId, OrderRule.supplierId and OrderRun.supplierId are all
+      // onDelete: Restrict, so Postgres refuses the delete with P2003. Without
+      // this it surfaced as a 500 — "something went wrong on our side", which
+      // invites the user to retry a permanently impossible action. 409 is what
+      // the web admin already maps to "this supplier is still in use".
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003") {
+        throw new ConflictException("Supplier is still referenced by items, plans or orders");
+      }
+      throw error;
+    }
     return { ok: true };
   }
 

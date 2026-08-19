@@ -1,20 +1,21 @@
 import { Controller, Get, Query, UseGuards } from "@nestjs/common";
 import { DateTime } from "luxon";
-import type { Recurrence } from "@poruchka/shared";
 import { SupabaseAuthGuard } from "../auth/supabase-auth.guard";
 import { TenantId } from "../auth/request-context";
 import { PrismaService } from "../prisma/prisma.service";
-import { recurrenceMatchesDate } from "../reminders/recurrence";
+import { OrderRunsService } from "./order-runs.service";
 
 /**
- * Calendar read-model: derives order occurrences from active schedules across a
- * date range, overlaying real ReminderInstance status where one exists. Lets the
- * calendar populate as soon as a schedule is created (before the scheduler runs).
+ * Calendar read-model over supplier order runs. Listing materializes missing
+ * occurrences first so the calendar and reminder engine share one source of truth.
  */
 @UseGuards(SupabaseAuthGuard)
 @Controller("reminders")
 export class RemindersController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly orderRuns: OrderRunsService,
+  ) {}
 
   @Get()
   async list(@TenantId() tenantId: string, @Query("from") from?: string, @Query("to") to?: string) {
@@ -24,19 +25,25 @@ export class RemindersController {
     const start = (from ? DateTime.fromISO(from, { zone }) : DateTime.now().setZone(zone).startOf("week")).startOf("day");
     const end = (to ? DateTime.fromISO(to, { zone }) : start.plus({ days: 6 })).startOf("day");
 
-    const [schedules, instances] = await Promise.all([
-      this.prisma.schedule.findMany({
-        where: { tenantId, active: true },
-        include: { item: { include: { supplier: true } }, assignedUser: true },
-      }),
-      this.prisma.reminderInstance.findMany({
-        where: { tenantId, dueDate: { gte: start.toJSDate(), lte: end.endOf("day").toJSDate() } },
-      }),
-    ]);
+    await this.orderRuns.materializeRange(tenantId, start, end);
+    const runs = await this.prisma.orderRun.findMany({
+      where: {
+        tenantId,
+        dueDate: {
+          gte: new Date(Date.UTC(start.year, start.month - 1, start.day)),
+          lte: new Date(Date.UTC(end.year, end.month - 1, end.day)),
+        },
+      },
+      include: {
+        supplier: true,
+        assignedUser: true,
+        lines: { orderBy: { sortOrder: "asc" } },
+      },
+    });
 
     const out: Array<{
       date: string;
-      scheduleId: string;
+      orderRunId: string;
       item: string;
       supplier: string;
       assignee: string;
@@ -44,21 +51,24 @@ export class RemindersController {
       status: string;
     }> = [];
 
-    for (let d = start; d <= end; d = d.plus({ days: 1 })) {
-      for (const s of schedules) {
-        const rec = s.recurrence as unknown as Recurrence;
-        if (!recurrenceMatchesDate(rec, d)) continue;
-        const inst = instances.find(
-          (i) => i.scheduleId === s.id && DateTime.fromJSDate(i.dueDate, { zone }).hasSame(d, "day"),
-        );
+    for (const run of runs) {
+      const status =
+        run.status === "PENDING"
+          ? "pending"
+          : run.status === "ESCALATED"
+            ? "escalated"
+            : run.status === "SKIPPED"
+              ? "skipped"
+              : "confirmed";
+      for (const line of run.lines) {
         out.push({
-          date: d.toISODate() ?? "",
-          scheduleId: s.id,
-          item: s.item.name,
-          supplier: s.item.supplier.name,
-          assignee: s.assignedUser.name,
-          time: s.reminderTimeOfDay,
-          status: inst ? inst.status.toLowerCase() : "pending",
+          date: DateTime.fromJSDate(run.dueDate, { zone: "utc" }).toISODate() ?? "",
+          orderRunId: run.id,
+          item: line.itemNameSnapshot,
+          supplier: run.supplier.name,
+          assignee: run.assignedUser.name,
+          time: DateTime.fromJSDate(run.dueAt).setZone(zone).toFormat("HH:mm"),
+          status,
         });
       }
     }

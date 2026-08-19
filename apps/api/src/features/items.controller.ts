@@ -1,4 +1,17 @@
-import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, UseGuards } from "@nestjs/common";
+import {
+  BadRequestException,
+  Body,
+  ConflictException,
+  Controller,
+  Delete,
+  Get,
+  NotFoundException,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { createItemSchema } from "@poruchka/shared";
 import { SupabaseAuthGuard } from "../auth/supabase-auth.guard";
 import { TenantId } from "../auth/request-context";
@@ -40,7 +53,18 @@ export class ItemsController {
   @Delete(":id")
   async remove(@TenantId() tenantId: string, @Param("id") id: string) {
     await this.ensureOwned(tenantId, id);
-    await this.prisma.item.delete({ where: { id } });
+    try {
+      await this.prisma.item.delete({ where: { id } });
+    } catch (error) {
+      // OrderRuleLine.itemId and OrderRunLine.itemId are onDelete: Restrict, so
+      // an item that any plan or order references cannot be deleted. Report it as
+      // 409, which the web admin maps to "this item is used in a plan"; a 500 read
+      // as a server fault and invited an endless retry.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003") {
+        throw new ConflictException("Item is still referenced by a plan or an order");
+      }
+      throw error;
+    }
     return { ok: true };
   }
 

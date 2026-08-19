@@ -29,7 +29,8 @@ const IDS = {
   owner: "22222222-2222-4222-8222-222222222222",
   metro: "33333333-3333-4333-8333-333333333333",
   pork: "44444444-4444-4444-8444-444444444444",
-  schedule: "55555555-5555-4555-8555-555555555555",
+  orderRule: "55555555-5555-4555-8555-555555555555",
+  orderRuleLine: "66666666-6666-4666-8666-666666666666",
 };
 
 (async () => {
@@ -58,17 +59,29 @@ const IDS = {
       create: { id: IDS.pork, tenantId: IDS.tenant, name: "Pork Meat", supplierId: IDS.metro, unit: "kg" },
     });
 
-    await prisma.schedule.upsert({
-      where: { id: IDS.schedule },
-      update: {},
+    await prisma.orderRule.upsert({
+      where: { id: IDS.orderRule },
+      update: { archivedAt: null, active: true },
       create: {
-        id: IDS.schedule,
+        id: IDS.orderRule,
         tenantId: IDS.tenant,
-        itemId: IDS.pork,
+        supplierId: IDS.metro,
         assignedUserId: IDS.owner,
         reminderTimeOfDay: "09:00",
         recurrence: { type: "weekly", weekdays: [3] }, // every Wednesday (ISO 3)
         active: true,
+      },
+    });
+
+    await prisma.orderRuleLine.upsert({
+      where: { id: IDS.orderRuleLine },
+      update: {},
+      create: {
+        id: IDS.orderRuleLine,
+        orderRuleId: IDS.orderRule,
+        itemId: IDS.pork,
+        defaultQuantity: 10,
+        unit: "kg",
       },
     });
 
@@ -77,7 +90,7 @@ const IDS = {
       users: await prisma.user.count(),
       suppliers: await prisma.supplier.count(),
       items: await prisma.item.count(),
-      schedules: await prisma.schedule.count(),
+      orderRules: await prisma.orderRule.count(),
     });
   } catch (e) {
     console.error("Seed FAILED:", e.message);

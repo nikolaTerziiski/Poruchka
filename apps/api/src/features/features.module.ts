@@ -4,9 +4,11 @@ import { SupabaseAuthGuard } from "../auth/supabase-auth.guard";
 import { MeController } from "./me.controller";
 import { SuppliersController } from "./suppliers.controller";
 import { ItemsController } from "./items.controller";
-import { SchedulesController } from "./schedules.controller";
 import { TeamController } from "./team.controller";
 import { RemindersController } from "./reminders.controller";
+import { OrderRulesController } from "./order-rules.controller";
+import { OrderRunsController } from "./order-runs.controller";
+import { OrderRunsService } from "./order-runs.service";
 
 @Module({
   imports: [ChannelsModule],
@@ -14,10 +16,12 @@ import { RemindersController } from "./reminders.controller";
     MeController,
     SuppliersController,
     ItemsController,
-    SchedulesController,
+    OrderRulesController,
+    OrderRunsController,
     TeamController,
     RemindersController,
   ],
-  providers: [SupabaseAuthGuard],
+  providers: [SupabaseAuthGuard, OrderRunsService],
+  exports: [OrderRunsService],
 })
 export class FeaturesModule {}
