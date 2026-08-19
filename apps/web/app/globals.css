@@ -1,8 +1,25 @@
 /* Tailwind kept transitionally for pages not yet migrated to the DS.
  * Poruchka Design System tokens + base drive the new look. */
 @import "tailwindcss";
-@import "./ds/fonts.css";
 @import "./ds/colors.css";
 @import "./ds/typography.css";
 @import "./ds/spacing.css";
 @import "./ds/base.css";
+
+/* Font wiring. The faces are self-hosted by next/font in app/layout.tsx, which
+ * puts --font-display-src / --font-sans-src / --font-mono-src on <html>.
+ * Bind the design-system tokens to them here rather than inside
+ * ds/typography.css: next/font's generated class lands on the same element as
+ * :root, the two have identical specificity, and the winner would then depend
+ * on stylesheet source order. Declaring the tokens last, after every ds/
+ * import, makes the result deterministic and keeps the fallback chain visible.
+ *
+ * The families changed with this wiring: Bricolage Grotesque serves no
+ * Cyrillic at all and Hanken Grotesk serves only cyrillic-ext, so Bulgarian
+ * text rendered in the OS font. Wix Madefor Display/Text and JetBrains Mono
+ * all ship a real `cyrillic` subset. */
+:root {
+  --font-display: var(--font-display-src), system-ui, sans-serif;
+  --font-sans: var(--font-sans-src), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-mono-src), ui-monospace, "SFMono-Regular", Menlo, monospace;
+}

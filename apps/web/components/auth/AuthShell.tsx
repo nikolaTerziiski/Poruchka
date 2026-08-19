@@ -27,7 +27,7 @@ export function AuthShell({
         <LanguageSwitcher />
       </div>
 
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px 24px 56px" }}>
+      <main id="main" style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px 24px 56px" }}>
         <div style={{ width: "100%", maxWidth: 400 }}>
           <div style={{ textAlign: "center", marginBottom: 24 }}>
             <h1 style={{ fontSize: 28, letterSpacing: "-0.02em" }}>{title}</h1>
@@ -40,7 +40,7 @@ export function AuthShell({
             <p style={{ textAlign: "center", fontSize: 14, color: "var(--text-muted)", marginTop: 22 }}>{footer}</p>
           ) : null}
         </div>
-      </div>
+      </main>
     </div>
   );
 }

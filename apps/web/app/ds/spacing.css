@@ -1,21 +1,46 @@
 /* Poruchka — Spacing, radii, shadows, borders, z-index, motion
- * 4px base grid. Restrained radii (6–12px). Soft, low shadows. */
+ * 4px base grid. Restrained radii (6–12px). Soft, low shadows.
+ *
+ * HOW TO USE THIS FILE — components must reference these tokens instead of writing raw
+ * pixel values. Today most gaps and paddings in app/ and components/ are magic numbers
+ * (2, 5, 7, 9, 11, 13px …), which is why the same table renders at a different row height
+ * on Orders than on Suppliers. When you touch a component, replace its raw numbers with the
+ * nearest token rather than inventing a new one; if nothing fits, the answer is almost
+ * always that the value should move to a token here, not that the scale needs another step.
+ *
+ *   gap / padding / margin ....... --space-*
+ *   corner radius ................ --radius-*
+ *   elevation .................... --shadow-*
+ *   stacking order ............... --z-*
+ *   transition duration / easing . --dur-* / --ease-*
+ *   page + chrome dimensions ..... --content-max, --sidebar-width, --topbar-height
+ */
 
 :root {
-  /* Spacing scale (4px base) */
-  --space-0:  0;
-  --space-1:  4px;
-  --space-2:  8px;
-  --space-3:  12px;
-  --space-4:  16px;
-  --space-5:  20px;
-  --space-6:  24px;
-  --space-8:  32px;
-  --space-10: 40px;
-  --space-12: 48px;
-  --space-16: 64px;
-  --space-20: 80px;
-  --space-24: 96px;
+  /* Spacing scale (4px base).
+   * The whole steps are the default vocabulary. The half-steps exist because real controls
+   * need optical padding between them (a 40px-tall input cannot take 12px or 16px vertical
+   * padding); reach for a half-step only inside a control, never for layout rhythm. */
+  --space-0:   0;
+  --space-0-5: 2px;  /* half-step */
+  --space-1:   4px;
+  --space-1-5: 6px;  /* half-step */
+  --space-2:   8px;
+  --space-2-5: 10px; /* half-step */
+  --space-3:   12px;
+  --space-3-5: 14px; /* half-step */
+  --space-4:   16px;
+  --space-4-5: 18px; /* half-step */
+  --space-5:   20px;
+  --space-6:   24px;
+  --space-7:   28px;
+  --space-8:   32px;
+  --space-10:  40px;
+  --space-12:  48px;
+  --space-14:  56px;
+  --space-16:  64px;
+  --space-20:  80px;
+  --space-24:  96px;
 
   /* Radii — restrained, never fully pill on containers */
   --radius-sm:   6px;
@@ -25,27 +50,35 @@
   --radius-2xl:  16px;
   --radius-pill: 9999px; /* reserved for chips/avatars/toggles only */
 
-  /* Borders */
-  --border-width: 1px;
-  --border-width-strong: 1.5px;
-
   /* Shadows — soft, warm-tinted, low elevation */
   --shadow-xs: 0 1px 2px rgba(34, 30, 24, 0.05);
   --shadow-sm: 0 1px 2px rgba(34, 30, 24, 0.06), 0 1px 3px rgba(34, 30, 24, 0.05);
   --shadow-md: 0 2px 4px rgba(34, 30, 24, 0.05), 0 4px 12px rgba(34, 30, 24, 0.07);
   --shadow-lg: 0 8px 24px rgba(34, 30, 24, 0.10), 0 2px 6px rgba(34, 30, 24, 0.06);
-  --shadow-focus: 0 0 0 3px var(--ring);
+  /* Focus indicator. Two rings: a 2px surface-coloured spacer, then the real 2px ring.
+   * The spacer is load-bearing — --ring is the same azure as --accent, so a flush ring
+   * would vanish against a focused primary button. Was `0 0 0 3px var(--ring)` while
+   * --ring was a 28% wash, which composited to a 1.44:1 halo. */
+  --shadow-focus: 0 0 0 2px var(--surface-card), 0 0 0 4px var(--ring);
+  /* Same shape for a field that is focused while invalid, so the ring reads as
+   * one indicator in two colours rather than two different focus treatments. */
+  --shadow-focus-invalid: 0 0 0 2px var(--surface-card), 0 0 0 4px var(--ring-invalid);
 
   /* Layout */
-  --sidebar-width: 248px;
-  --content-max: 1120px;
-  --topbar-height: 64px;
+  --sidebar-width: 248px; /* .app-sidebar in app/(app)/layout.tsx */
+  --content-max: 1120px;  /* page wrappers */
+  --topbar-height: 56px;  /* was 64px, which contradicted the shipped .app-topbar (56px) */
 
-  /* Z-index */
+  /* Z-index — one ladder for the whole app. Within the mobile drawer the order that matters
+   * is backdrop < drawer: the scrim must dim the page without covering the panel it belongs
+   * to, so --z-backdrop sits BELOW --z-drawer (do not reach for --z-overlay there — that is
+   * the dialog scrim, and it is above the drawer on purpose). */
   --z-base: 0; /* @kind other */
-  --z-sticky: 100; /* @kind other */
-  --z-drawer: 200; /* @kind other */
-  --z-overlay: 300; /* @kind other */
+  --z-sticky: 100; /* @kind other — in-page sticky headers */
+  --z-topbar: 150; /* @kind other — mobile top bar */
+  --z-backdrop: 190; /* @kind other — mobile drawer scrim, must stay under --z-drawer */
+  --z-drawer: 200; /* @kind other — sidebar / mobile drawer panel */
+  --z-overlay: 300; /* @kind other — dialog scrim */
   --z-modal: 400; /* @kind other */
   --z-toast: 500; /* @kind other */
 

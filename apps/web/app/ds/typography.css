@@ -1,11 +1,22 @@
 /* Poruchka — Typography tokens
- * Display: Bricolage Grotesque (characterful grotesque, confident, non-AI).
- * Body/UI:  Hanken Grotesk (clean, warm, professional — not default Inter).
- * Mono:     JetBrains Mono (link codes, times, recurrence rules). */
+ * Display: Wix Madefor Display (characterful grotesque, confident, non-AI).
+ * Body/UI: Wix Madefor Text (clean, warm, professional — not default Inter).
+ * Mono:    JetBrains Mono (link codes, times, recurrence rules).
+ *
+ * THE FACES ARE NOT BOUND HERE. next/font self-hosts them in app/layout.tsx and
+ * app/globals.css binds --font-* to its --font-*-src variables, declared after every
+ * ds/ import so the cascade is deterministic. Change the families THERE, not here.
+ *
+ * Any replacement family MUST ship a real `cyrillic` subset. Bulgarian is this
+ * product's primary language, and the previous pair (Bricolage Grotesque, which has
+ * no Cyrillic at all, and Hanken Grotesk, which has only cyrillic-ext) silently
+ * dropped every Bulgarian string to the OS font. The declarations below are only a
+ * fallback for the case where that binding is absent, so they name real families
+ * with Cyrillic coverage rather than the faces that caused that bug. */
 
 :root {
-  --font-display: "Bricolage Grotesque", "Hanken Grotesk", system-ui, sans-serif;
-  --font-sans: "Hanken Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Wix Madefor Display", system-ui, sans-serif;
+  --font-sans: "Wix Madefor Text", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
 
   /* Type scale — fluid-ish, rem-based on 16px root */

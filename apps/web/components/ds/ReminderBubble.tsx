@@ -15,12 +15,19 @@ export interface ReminderBubbleProps {
 
 /**
  * ReminderBubble — the realistic Telegram message mock (ported from the DS).
- * Mirrors the real bot copy from apps/api (dev.controller / bot service),
- * localized EN/BG to match the rest of the UI.
+ *
+ * The copy here MUST stay in sync with the shipped bot copy in
+ * `apps/api/src/channels/bot-copy.ts` — specifically `orderReminderMessage()`
+ * (the bubble body + the "tap" line) and `confirmButtonLabel()` (the button).
+ * The whole point of the hero is "what you see is what arrives in Telegram",
+ * so if that file changes, change this one in the same commit.
+ *
+ * Note: the check glyph in `confirmButtonLabel()` ("✓ Изпратена") is drawn here
+ * as an SVG, so the label strings below carry no literal ✓.
  */
 export function ReminderBubble({
-  item = "Pork Meat",
-  supplier = "Metro",
+  item,
+  supplier,
   confirmed = false,
   time = "09:00",
   onConfirm,
@@ -30,11 +37,25 @@ export function ReminderBubble({
   const lang = useLang();
   const t =
     lang === "bg"
-      ? { tap: "Натиснете „Готово“, след като я подадете.", done: "Готово", confirmed: "Поръчано · потвърдено" }
-      : { tap: "Tap Done when it's ordered.", done: "Done", confirmed: "Ordered · confirmed" };
+      ? {
+          tap: "Натиснете „Изпратена“, след като подадете поръчката.",
+          done: "Изпратена",
+          confirmed: "Отбелязана като изпратена",
+          item: "Свинско месо",
+          supplier: "Метро",
+        }
+      : {
+          tap: "Tap “Sent” once you have placed the order.",
+          done: "Sent",
+          confirmed: "Marked as sent",
+          item: "Pork Meat",
+          supplier: "Metro",
+        };
+  const itemLabel = item ?? t.item;
+  const supplierLabel = supplier ?? t.supplier;
 
   return (
-    <div style={{ width: 340, maxWidth: "100%", fontFamily: "var(--font-sans)", ...style }}>
+    <div style={{ width: "100%", maxWidth: 340, fontFamily: "var(--font-sans)", ...style }}>
       {/* Bot row */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, paddingLeft: 4 }}>
         <span
@@ -56,7 +77,7 @@ export function ReminderBubble({
         <span style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)" as unknown as number, color: "var(--text-strong)" }}>
           Poruchka bot
         </span>
-        <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-faint)" }}>{time}</span>
+        <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>{time}</span>
       </div>
 
       {/* Bubble */}
@@ -70,18 +91,22 @@ export function ReminderBubble({
         }}
       >
         <div style={{ fontSize: "var(--text-base)", lineHeight: "var(--leading-snug)", color: "var(--text-strong)" }}>
-          <span aria-hidden>🛒</span>{" "}
-          {lang === "bg" ? (
-            <>
-              Поръчай <strong style={{ fontWeight: "var(--weight-semibold)" as unknown as number }}>{item}</strong> от{" "}
-              <strong style={{ fontWeight: "var(--weight-semibold)" as unknown as number }}>{supplier}</strong> днес.
-            </>
-          ) : (
-            <>
-              Order <strong style={{ fontWeight: "var(--weight-semibold)" as unknown as number }}>{item}</strong> from{" "}
-              <strong style={{ fontWeight: "var(--weight-semibold)" as unknown as number }}>{supplier}</strong> today.
-            </>
-          )}
+          <div>
+            <span aria-hidden>🛒</span>{" "}
+            {lang === "bg" ? (
+              <>
+                Поръчка към <strong style={{ fontWeight: "var(--weight-semibold)" as unknown as number }}>{supplierLabel}</strong> — за днес
+              </>
+            ) : (
+              <>
+                Order from <strong style={{ fontWeight: "var(--weight-semibold)" as unknown as number }}>{supplierLabel}</strong> — for today
+              </>
+            )}
+          </div>
+          <div style={{ marginTop: 4 }}>
+            <span aria-hidden>•</span>{" "}
+            <strong style={{ fontWeight: "var(--weight-semibold)" as unknown as number }}>{itemLabel}</strong>
+          </div>
         </div>
         <div style={{ marginTop: 6, fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>{t.tap}</div>
 

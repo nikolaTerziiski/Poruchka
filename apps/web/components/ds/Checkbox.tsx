@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { ChangeEventHandler, CSSProperties, ReactNode } from "react";
 
 export interface CheckboxProps {
@@ -11,8 +12,15 @@ export interface CheckboxProps {
   style?: CSSProperties;
 }
 
-/** Poruchka Checkbox — controlled checkbox with label; azure fill when checked. */
+/**
+ * Poruchka Checkbox — controlled checkbox with label; azure fill when checked.
+ *
+ * The real <input> is opacity:0, so a `:focus-visible` ring on it paints on nothing.
+ * Focus is tracked in state and drawn on the visible box instead — same pattern as
+ * Input.tsx / Select.tsx, using the shared --shadow-focus token.
+ */
 export function Checkbox({ checked = false, onChange, label, disabled = false, id, style = {} }: CheckboxProps) {
+  const [focus, setFocus] = useState(false);
   return (
     <label
       htmlFor={id}
@@ -33,9 +41,11 @@ export function Checkbox({ checked = false, onChange, label, disabled = false, i
           height: 18,
           flex: "none",
           borderRadius: "var(--radius-sm)",
-          border: `1.5px solid ${checked ? "var(--accent)" : "var(--border-strong)"}`,
+          border: `1.5px solid ${checked ? "var(--accent)" : focus ? "var(--border-focus)" : "var(--border-strong)"}`,
           background: checked ? "var(--accent)" : "var(--surface-card)",
-          transition: "background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out)",
+          boxShadow: focus && !disabled ? "var(--shadow-focus)" : "none",
+          transition:
+            "background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out)",
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
@@ -52,6 +62,8 @@ export function Checkbox({ checked = false, onChange, label, disabled = false, i
           checked={checked}
           onChange={onChange}
           disabled={disabled}
+          onFocus={() => setFocus(true)}
+          onBlur={() => setFocus(false)}
           style={{ position: "absolute", inset: 0, opacity: 0, margin: 0, cursor: "inherit" }}
         />
       </span>

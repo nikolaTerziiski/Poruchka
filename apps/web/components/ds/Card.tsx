@@ -18,12 +18,13 @@ export function Card({ pad = "lg", interactive = false, style = {}, children, ..
     <div
       style={{
         background: "var(--surface-card)",
-        border: "1px solid var(--border-subtle)",
+        borderWidth: 1,
+        borderStyle: "solid",
+        borderColor: hover && interactive ? "var(--border-default)" : "var(--border-subtle)",
         borderRadius: "var(--radius-xl)",
         boxShadow: hover && interactive ? "var(--shadow-md)" : "var(--shadow-sm)",
         padding: pads[pad] ?? 24,
         transition: "box-shadow var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out)",
-        borderColor: hover && interactive ? "var(--border-default)" : "var(--border-subtle)",
         cursor: interactive ? "pointer" : "default",
         ...style,
       }}

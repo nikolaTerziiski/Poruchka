@@ -12,19 +12,35 @@ import { EmptyState } from "@/components/ds/EmptyState";
 import { Dialog } from "@/components/ds/Dialog";
 import { PageHead } from "@/components/ds/PageHead";
 import { api } from "@/lib/api";
-import { useTr, useCommon } from "@/lib/i18n";
+import { useTr, useCommon, useApiError } from "@/lib/i18n";
+
+/**
+ * A delete blocked by the order plans / past orders that reference the item.
+ * Structural, like the check in lib/i18n, so it survives minification.
+ *
+ * OrderRuleLine.item and OrderLine.item are both `onDelete: Restrict`, so the
+ * database refuses the delete. While items.controller.ts still lets Prisma's
+ * P2003 escape as a 500, the user gets the generic server message; the moment
+ * it maps P2003 to a ConflictException, this picks the case up unchanged.
+ */
+function isItemInUse(cause: unknown): boolean {
+  if (typeof cause !== "object" || cause === null) return false;
+  const e = cause as { status?: unknown; detail?: unknown };
+  if (e.status === 409) return true;
+  return typeof e.detail === "string" && e.detail.includes("ITEM_IN_USE");
+}
 
 const M = {
   en: {
     title: "Items",
-    subtitle: "The goods you order, each tied to a supplier",
+    subtitle: "Everything you order — each item with its own supplier",
     addItem: "Add item",
     addSupplierFirst: "Add a supplier first",
     colItem: "Item",
     colSupplier: "Supplier",
     colUnit: "Unit",
     emptyTitle: "No items yet",
-    emptyDescription: "Add the goods you order — Pork Meat, Tomatoes, Sirene — each tied to a supplier.",
+    emptyDescription: "Add the items you order — Pork Meat, Tomatoes, Sirene — and pick a supplier for each.",
     editItem: "Edit item",
     saveChanges: "Save changes",
     nameLabel: "Name",
@@ -32,23 +48,26 @@ const M = {
     supplierLabel: "Supplier",
     selectSupplier: "Select a supplier…",
     unitLabel: "Unit",
-    unitPlaceholder: "kg, keg, tray…",
+    unitPlaceholder: "kg, l, case, tray…",
     noteLabel: "Order note",
     noteHint: "What exactly to order — shown in the reminder (e.g. ≈20 kg, lean)",
     notePlaceholder: "≈20 kg, lean for the grill",
     deleteTitle: (name: string) => `Delete ${name}?`,
-    deleteDescription: "This item will be removed. Any schedules using it will need a new item.",
+    deleteDescription:
+      "An item can only be deleted if no order plan uses it and it has never been ordered. If it is in a plan, remove it from the plan first.",
     deleteConfirm: "Delete item",
     loadFailed: "Failed to load items.",
     saveFailed: "Could not save item.",
     deleteFailed: "Could not delete item.",
+    deleteInUse:
+      "This item is used by an order plan or has already been ordered. Remove it from your plans to delete it.",
     loadingItems: "Loading items…",
     editAria: "Edit item",
     deleteAria: "Delete item",
   },
   bg: {
     title: "Артикули",
-    subtitle: "Стоките, които поръчвате, всяка свързана с доставчик",
+    subtitle: "Всичко, което поръчвате — всеки артикул със своя доставчик",
     addItem: "Добави артикул",
     addSupplierFirst: "Първо добавете доставчик",
     colItem: "Артикул",
@@ -56,7 +75,7 @@ const M = {
     colUnit: "Мярка",
     emptyTitle: "Все още няма артикули",
     emptyDescription:
-      "Добавете стоките, които поръчвате — свинско месо, домати, сирене — всяка свързана с доставчик.",
+      "Добавете артикулите, които поръчвате — свинско месо, домати, сирене — и посочете доставчик за всеки.",
     editItem: "Редактирай артикул",
     saveChanges: "Запази промените",
     nameLabel: "Име",
@@ -64,17 +83,19 @@ const M = {
     supplierLabel: "Доставчик",
     selectSupplier: "Изберете доставчик…",
     unitLabel: "Мярка",
-    unitPlaceholder: "кг, бъчва, каса…",
-    noteLabel: "Бележка за поръчка",
+    unitPlaceholder: "кг, л, каса, стек…",
+    noteLabel: "Бележка към поръчката",
     noteHint: "Какво точно да се поръча — показва се в напомнянето (напр. ≈20 кг, постно)",
     notePlaceholder: "≈20 кг, постно за скара",
     deleteTitle: (name: string) => `Изтриване на „${name}“?`,
     deleteDescription:
-      "Артикулът ще бъде премахнат. Всички графици, които го използват, ще се нуждаят от нов артикул.",
+      "Артикулът може да бъде изтрит само ако не се използва в план за поръчка и не е поръчван досега. Ако се използва в план, първо го махнете от плана.",
     deleteConfirm: "Изтрий артикул",
     loadFailed: "Зареждането на артикулите не бе успешно.",
     saveFailed: "Артикулът не може да бъде запазен.",
     deleteFailed: "Артикулът не може да бъде изтрит.",
+    deleteInUse:
+      "Този артикул се използва в план за поръчка или е бил поръчван. Махнете го от плановете, за да го изтриете.",
     loadingItems: "Зареждане на артикулите…",
     editAria: "Редактирай артикул",
     deleteAria: "Изтрий артикул",
@@ -103,10 +124,13 @@ type DialogMode =
 export default function ItemsPage() {
   const t = useTr(M);
   const c = useCommon();
+  const errText = useApiError();
   const [items, setItems] = useState<Item[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
+  // A flag, not a translated string: the fetch runs once, so a string captured
+  // here would stay frozen in whatever language was active at mount.
+  const [loadFailed, setLoadFailed] = useState<boolean>(false);
 
   // Create / edit dialog
   const [dialog, setDialog] = useState<DialogMode>(null);
@@ -131,7 +155,7 @@ export default function ItemsPage() {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      setError(null);
+      setLoadFailed(false);
       try {
         const [nextItems, nextSuppliers] = await Promise.all([
           api<Item[]>("/items"),
@@ -141,8 +165,9 @@ export default function ItemsPage() {
         setItems(nextItems);
         setSuppliers(nextSuppliers);
       } catch (e) {
+        console.error(e);
         if (cancelled) return;
-        setError(e instanceof Error ? e.message : t.loadFailed);
+        setLoadFailed(true);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -208,8 +233,8 @@ export default function ItemsPage() {
       }
       await refetchItems();
       setDialog(null);
-    } catch (e) {
-      setFormError(e instanceof Error ? e.message : t.saveFailed);
+    } catch (cause) {
+      setFormError(errText(cause, t.saveFailed));
     } finally {
       setSaving(false);
     }
@@ -223,8 +248,8 @@ export default function ItemsPage() {
       await api<void>(`/items/${target.id}`, { method: "DELETE" });
       await refetchItems();
       setTarget(null);
-    } catch (e) {
-      setDeleteError(e instanceof Error ? e.message : t.deleteFailed);
+    } catch (cause) {
+      setDeleteError(isItemInUse(cause) ? t.deleteInUse : errText(cause, t.deleteFailed));
     } finally {
       setDeleting(false);
     }
@@ -253,12 +278,12 @@ export default function ItemsPage() {
       />
 
       {loading ? (
-        <div style={{ padding: "48px 0", textAlign: "center", fontSize: "var(--text-sm)", color: "var(--text-faint)" }}>
+        <div style={{ padding: "48px 0", textAlign: "center", fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>
           {t.loadingItems}
         </div>
-      ) : error ? (
-        <div style={{ padding: "48px 0", textAlign: "center", fontSize: "var(--text-sm)", color: "var(--red-600)" }}>
-          {error}
+      ) : loadFailed ? (
+        <div role="alert" style={{ padding: "48px 0", textAlign: "center", fontSize: "var(--text-sm)", color: "var(--red-600)" }}>
+          {t.loadFailed}
         </div>
       ) : items.length === 0 ? (
         <EmptyState
@@ -273,11 +298,12 @@ export default function ItemsPage() {
         />
       ) : (
         <Table<Item>
+          label={t.title}
           columns={[
             { key: "name", label: t.colItem },
             { key: "supplier", label: t.colSupplier },
             { key: "unit", label: t.colUnit, width: 110 },
-            { key: "actions", label: "", align: "right", width: 90 },
+            { key: "actions", label: "", align: "right", width: 90, stickyRight: true },
           ]}
           rows={items}
           rowKey={(r) => r.id}
@@ -297,7 +323,7 @@ export default function ItemsPage() {
               return r.unit ? (
                 <Badge tone="neutral">{r.unit}</Badge>
               ) : (
-                <span style={{ color: "var(--text-faint)" }}>—</span>
+                <span style={{ color: "var(--text-muted)" }}>—</span>
               );
             }
             return (
@@ -364,7 +390,7 @@ export default function ItemsPage() {
               />
             </Field>
             {formError ? (
-              <span style={{ fontSize: "var(--text-xs)", color: "var(--red-600)" }}>{formError}</span>
+              <span role="alert" style={{ fontSize: "var(--text-xs)", color: "var(--red-600)" }}>{formError}</span>
             ) : null}
           </div>
         </Dialog>
@@ -387,7 +413,7 @@ export default function ItemsPage() {
           }}
         >
           {deleteError ? (
-            <span style={{ fontSize: "var(--text-xs)", color: "var(--red-600)" }}>{deleteError}</span>
+            <span role="alert" style={{ fontSize: "var(--text-xs)", color: "var(--red-600)" }}>{deleteError}</span>
           ) : null}
         </Dialog>
       ) : null}

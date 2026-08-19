@@ -2,7 +2,15 @@
  * Telegram-adjacent azure accent on a warm bone-paper neutral base.
  * Deliberately moves off the scaffold's default indigo (#6366f1) — azure
  * reinforces the product's Telegram bot connection without the "AI indigo" look.
- * Single confident accent (azure); status uses distinct green/amber/red. */
+ * Single confident accent (azure); status uses distinct green/amber/red.
+ *
+ * CONTRAST CONTRACT (WCAG 2.1 AA) — the semantic aliases below are tuned so that
+ * every pairing the product actually ships passes without per-component overrides:
+ *   - text tokens  >= 4.5:1 on --surface-card, --surface-page, --surface-sunken and
+ *                     --surface-inset (the only surfaces text is ever placed on);
+ *   - control borders, focus rings and status dots >= 3:1 (SC 1.4.11 non-text).
+ * The raw --brand-* / --warm-* scales are unchanged; only the aliases moved.
+ * Measured ratios are recorded inline. If you repoint an alias, re-measure it. */
 
 :root {
   /* --- Brand: Azure (the single accent) — Telegram-adjacent --- */
@@ -66,28 +74,47 @@
   --surface-hover:   var(--warm-100);
   --surface-inverse: var(--warm-900);
 
-  /* Text */
-  --text-strong:   var(--warm-900);
-  --text-body:     var(--warm-700);
-  --text-muted:    var(--warm-500);
-  --text-faint:    var(--warm-400);
-  --text-inverse:  var(--warm-50);
-  --text-on-accent: var(--white);
-  --text-link:     var(--brand-600);
+  /* Text — every token here is safe as body text on any --surface-* above.
+   * The one exception is --text-faint: it is a NON-TEXT token (see below). */
+  --text-strong:   var(--warm-900); /* 15.5:1 card */
+  --text-body:     var(--warm-700); /* 9.30 card / 8.70 page / 8.12 sunken / 7.43 inset */
+  --text-muted:    var(--warm-600); /* was --warm-500 (3.78/3.54/3.30/3.02 — failed AA).
+                                     * Now 6.00 card / 5.62 page / 5.25 sunken / 4.80 inset. */
+  /* --text-faint is 3.78 card / 3.54 page / 3.30 sunken / 3.02 inset: it clears the 3:1
+   * non-text floor (SC 1.4.11) but NOT the 4.5:1 text floor. Use it only for decorative
+   * marks and small icons. For anything a person has to read, use --text-muted. */
+  --text-faint:    var(--warm-500); /* was --warm-400 (2.24 card / 2.09 page — far below any floor) */
+  --text-inverse:  var(--warm-50);  /* 15.5:1 on --surface-inverse */
+  --text-on-accent: var(--white);   /* 5.96:1 on --accent */
+  --text-link:     var(--brand-600); /* 5.96 card / 5.58 page */
 
-  /* Borders */
-  --border-subtle:  var(--warm-200);
-  --border-default: var(--warm-300);
-  --border-strong:  var(--warm-400);
-  --border-focus:   var(--brand-500);
+  /* Borders
+   * --border-subtle is decorative only (card outlines, table row rules) — it separates
+   * two static surfaces, so SC 1.4.11 does not apply and it stays hairline-light.
+   * --border-default and --border-strong DO bound interactive controls (inputs, selects,
+   * secondary buttons, checkboxes), so both must clear 3:1 against the surface behind them. */
+  --border-subtle:  var(--warm-200); /* decorative separator — 1.36:1, intentionally */
+  --border-default: var(--warm-500); /* was --warm-300 (1.59:1 — input/select/button outline
+                                      * was effectively invisible). Now 3.78 card / 3.54 page
+                                      * / 3.30 sunken / 3.02 inset. */
+  --border-strong:  var(--warm-600); /* was --warm-400 (2.24:1 — the unchecked checkbox box).
+                                      * Now 6.00 card / 5.62 page. */
+  --border-focus:   var(--brand-500); /* 4.28 card / 4.00 page — non-text, 3:1 applies */
 
-  /* Accent (primary action) */
-  --accent:         var(--brand-500);
-  --accent-hover:   var(--brand-600);
-  --accent-active:  var(--brand-700);
+  /* Accent (primary action)
+   * Moved one step down the ladder: white on --brand-500 is 4.28:1, which fails AA for the
+   * 14px/600 label on every primary button. --brand-600 carries the same azure identity at
+   * 5.96:1. --brand-500 stays defined and is still correct for non-text marks (dots, icons). */
+  --accent:         var(--brand-600); /* white on #1667a6 = 5.96:1 */
+  --accent-hover:   var(--brand-700); /* white = 8.14:1 */
+  --accent-active:  var(--brand-800); /* white = 10.91:1 */
   --accent-soft:    var(--brand-50);
+  /* Decorative chip outline, like --border-subtle: it rings a chip that is already
+   * identified by its own fill and label, so SC 1.4.11 does not apply and its 1.30:1
+   * against --surface-card is intentional. Do not "fix" it — darkening it turns the
+   * soft accent badge into a hard-outlined pill. */
   --accent-soft-border: var(--brand-100);
-  --accent-text:    var(--brand-700);
+  --accent-text:    var(--brand-700); /* 8.14 card / 7.24 on --accent-soft */
 
   /* Status — confirmed */
   --status-confirmed-fg: var(--green-700);
@@ -99,7 +126,8 @@
   --status-pending-fg: var(--amber-700);
   --status-pending-bg: var(--amber-50);
   --status-pending-bd: var(--amber-100);
-  --status-pending-dot: var(--amber-500);
+  --status-pending-dot: var(--amber-600); /* was --amber-500 — 2.71:1 on --status-pending-bg,
+                                           * the only status dot under the 3:1 floor. Now 3.84:1. */
 
   /* Status — escalated */
   --status-escalated-fg: var(--red-700);
@@ -107,6 +135,11 @@
   --status-escalated-bd: var(--red-100);
   --status-escalated-dot: var(--red-500);
 
-  /* Focus ring */
-  --ring: color-mix(in srgb, var(--brand-500) 28%, transparent);
+  /* Focus ring — opaque. The old 28% wash composited to #bfdbef: 1.44:1 on a card and
+   * 1.42:1 on the page, nowhere near the 3:1 SC 1.4.11 requires of a state indicator.
+   * The ring shares its colour with --accent, so it must never be painted flush against a
+   * primary button: --shadow-focus (spacing.css) and the :focus-visible outline in base.css
+   * both put a surface-coloured gap between the control and the ring. */
+  --ring: var(--brand-600);       /* #1667a6 — 5.96:1 on --surface-card, 5.58:1 on --surface-page */
+  --ring-invalid: var(--red-600); /* #971f13 — 8.33:1 card / 7.79:1 page; replaces the 22% red wash */
 }

@@ -33,7 +33,7 @@ export function Select({ invalid = false, size = "md", style = {}, disabled = fa
           "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238c8273' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>\")",
         backgroundRepeat: "no-repeat",
         backgroundPosition: "right 11px center",
-        boxShadow: focus ? "0 0 0 3px var(--ring)" : "none",
+        boxShadow: focus ? (invalid ? "var(--shadow-focus-invalid)" : "var(--shadow-focus)") : "none",
         transition: "border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out)",
         cursor: disabled ? "not-allowed" : "pointer",
         opacity: disabled ? 0.6 : 1,

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import type { CSSProperties } from "react";
 import { Plus, Pencil, Trash2, Store } from "lucide-react";
 import { Button } from "@/components/ds/Button";
 import { Input } from "@/components/ds/Input";
@@ -10,8 +11,8 @@ import { Table } from "@/components/ds/Table";
 import { EmptyState } from "@/components/ds/EmptyState";
 import { Dialog } from "@/components/ds/Dialog";
 import { PageHead } from "@/components/ds/PageHead";
-import { api } from "@/lib/api";
-import { useTr, useCommon } from "@/lib/i18n";
+import { api, ApiError } from "@/lib/api";
+import { useTr, useCommon, useApiError } from "@/lib/i18n";
 
 interface Supplier {
   id: string;
@@ -19,6 +20,21 @@ interface Supplier {
   contact: string | null;
   createdAt: string;
 }
+
+/** One error surface for the whole app: tinted box, thin border, red text.
+ *  Deliberately built on the raw red scale rather than --status-escalated-*,
+ *  which is the *order status* palette — "this order is overdue" and "the app
+ *  broke" must be able to look different later. Swap for a shared <Alert>
+ *  (and --alert-error-* tokens) once components/ds/Alert.tsx exists. */
+const ERROR_BOX: CSSProperties = {
+  padding: "11px 14px",
+  border: "1px solid var(--red-100)",
+  borderRadius: "var(--radius-md)",
+  background: "var(--red-50)",
+  color: "var(--red-700)",
+  fontSize: 13,
+  lineHeight: 1.5,
+};
 
 const M = {
   en: {
@@ -39,11 +55,12 @@ const M = {
     deleteTitle: (name: string) => `Delete ${name}?`,
     deleteFallbackTitle: "Delete supplier?",
     deleteDescription:
-      "This supplier will be removed. Items tied to it will be left without one until reassigned.",
-    deleteConfirm: "Delete supplier",
-    loadFailed: "Failed to load suppliers.",
-    saveFailed: "Failed to save supplier.",
-    deleteFailed: "Failed to delete supplier.",
+      "The supplier will be permanently deleted. This is only possible if no items, order plans or past orders are linked to it.",
+    deleteBlocked:
+      "This supplier can't be deleted while items, order plans or orders are still linked to it. Move them to another supplier first.",
+    loadFailed: "We couldn't load the suppliers. Please try again.",
+    saveFailed: "We couldn't save the supplier. Please try again.",
+    deleteFailed: "We couldn't delete the supplier. Please try again.",
     editAria: (name: string) => `Edit ${name}`,
     deleteAria: (name: string) => `Delete ${name}`,
   },
@@ -63,13 +80,17 @@ const M = {
     contactHint: "Телефон, имейл или сергия — по избор",
     contactPlaceholder: "+359 …",
     deleteTitle: (name: string) => `Изтриване на „${name}“?`,
-    deleteFallbackTitle: "Изтриване на доставчик?",
+    deleteFallbackTitle: "Изтриване на доставчика?",
+    // The database forbids deleting a supplier that still has items, plans or
+    // past orders (Restrict on all three relations), so the dialog must state
+    // the condition instead of promising a cascade that never happens.
     deleteDescription:
-      "Доставчикът ще бъде премахнат. Артикулите, свързани с него, ще останат без доставчик, докато не им зададете нов.",
-    deleteConfirm: "Изтрий доставчик",
-    loadFailed: "Зареждането на доставчиците не бе успешно.",
-    saveFailed: "Запазването на доставчика не бе успешно.",
-    deleteFailed: "Изтриването на доставчика не бе успешно.",
+      "Доставчикът ще бъде изтрит завинаги. Това е възможно само ако към него няма артикули, планове и минали поръчки.",
+    deleteBlocked:
+      "Този доставчик не може да бъде изтрит, защото към него все още има артикули, планове или поръчки. Първо ги прехвърлете към друг доставчик.",
+    loadFailed: "Не успяхме да заредим доставчиците. Опитайте отново.",
+    saveFailed: "Не успяхме да запазим доставчика. Опитайте отново.",
+    deleteFailed: "Не успяхме да изтрием доставчика. Опитайте отново.",
     editAria: (name: string) => `Редактирай ${name}`,
     deleteAria: (name: string) => `Изтрий ${name}`,
   },
@@ -78,14 +99,19 @@ const M = {
 export default function SuppliersPage() {
   const t = useTr(M);
   const c = useCommon();
+  const errText = useApiError();
   const COLUMNS = [
     { key: "name", label: t.colSupplier },
     { key: "contact", label: t.colContact },
-    { key: "actions", label: "", align: "right" as const, width: 90 },
+    { key: "actions", label: "", align: "right" as const, width: 90, stickyRight: true },
   ];
   const [rows, setRows] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // The three error surfaces are stored as the raw thrown cause, never as a
+  // translated string: the handlers then close over nothing language-dependent
+  // (so their dependency arrays are honest) and switching EN/BG re-translates a
+  // message that is already on screen.
+  const [loadError, setLoadError] = useState<unknown>(null);
 
   // Create/Edit dialog state. `editing` null while closed; a Supplier when
   // editing; a sentinel "new" marker (editing === undefined) for create.
@@ -94,19 +120,21 @@ export default function SuppliersPage() {
   const [name, setName] = useState("");
   const [contact, setContact] = useState("");
   const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<unknown>(null);
 
   // Delete confirm state.
   const [target, setTarget] = useState<Supplier | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<unknown>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
-    setError(null);
+    setLoadError(null);
     try {
       const data = await api<Supplier[]>("/suppliers");
       setRows(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : t.loadFailed);
+      setLoadError(e);
     } finally {
       setLoading(false);
     }
@@ -120,6 +148,7 @@ export default function SuppliersPage() {
     setEditing(null);
     setName("");
     setContact("");
+    setFormError(null);
     setFormOpen(true);
   }
 
@@ -127,12 +156,25 @@ export default function SuppliersPage() {
     setEditing(supplier);
     setName(supplier.name);
     setContact(supplier.contact ?? "");
+    setFormError(null);
     setFormOpen(true);
   }
 
   function closeForm() {
     if (saving) return;
     setFormOpen(false);
+    setFormError(null);
+  }
+
+  function openDelete(supplier: Supplier) {
+    setTarget(supplier);
+    setDeleteError(null);
+  }
+
+  function closeDelete() {
+    if (deleting) return;
+    setTarget(null);
+    setDeleteError(null);
   }
 
   async function saveForm() {
@@ -140,7 +182,7 @@ export default function SuppliersPage() {
     if (!trimmedName) return;
     const trimmedContact = contact.trim();
     setSaving(true);
-    setError(null);
+    setFormError(null);
     try {
       if (editing) {
         await api<Supplier>(`/suppliers/${editing.id}`, {
@@ -156,7 +198,7 @@ export default function SuppliersPage() {
       setFormOpen(false);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : t.saveFailed);
+      setFormError(e);
     } finally {
       setSaving(false);
     }
@@ -165,17 +207,29 @@ export default function SuppliersPage() {
   async function confirmDelete() {
     if (!target) return;
     setDeleting(true);
-    setError(null);
+    setDeleteError(null);
     try {
       await api(`/suppliers/${target.id}`, { method: "DELETE" });
       setTarget(null);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : t.deleteFailed);
+      // Stays open on failure — the reason is rendered inside the dialog, not
+      // on the page behind the backdrop where nobody can read it.
+      setDeleteError(e);
     } finally {
       setDeleting(false);
     }
   }
+
+  // A 409 from DELETE /suppliers/:id means the supplier still has items, plans
+  // or past orders attached; that is not a transient failure, so it gets its
+  // own instruction instead of "try again".
+  const deleteMessage =
+    deleteError === null
+      ? null
+      : deleteError instanceof ApiError && deleteError.status === 409
+        ? t.deleteBlocked
+        : errText(deleteError, t.deleteFailed);
 
   return (
     <div style={{ padding: "32px 36px", maxWidth: 1120, margin: "0 auto" }}>
@@ -189,12 +243,14 @@ export default function SuppliersPage() {
         }
       />
 
-      {error ? (
-        <div style={{ marginBottom: 16, fontSize: 14, color: "var(--red-600)" }}>{error}</div>
+      {loadError !== null ? (
+        <div role="alert" style={{ ...ERROR_BOX, marginBottom: 18 }}>
+          {errText(loadError, t.loadFailed)}
+        </div>
       ) : null}
 
       {loading ? (
-        <div style={{ fontSize: 14, color: "var(--text-faint)" }}>{c.loading}</div>
+        <div style={{ fontSize: 14, color: "var(--text-muted)" }}>{c.loading}</div>
       ) : rows.length === 0 ? (
         <Card pad="none">
           <EmptyState
@@ -210,6 +266,7 @@ export default function SuppliersPage() {
         </Card>
       ) : (
         <Table<Supplier>
+          label={t.title}
           columns={COLUMNS}
           rows={rows}
           rowKey={(r) => r.id}
@@ -221,7 +278,7 @@ export default function SuppliersPage() {
               return r.contact ? (
                 <span style={{ color: "var(--text-muted)" }}>{r.contact}</span>
               ) : (
-                <span style={{ color: "var(--text-faint)" }}>—</span>
+                <span style={{ color: "var(--text-muted)" }}>—</span>
               );
             }
             return (
@@ -238,7 +295,7 @@ export default function SuppliersPage() {
                   size="sm"
                   icon={<Trash2 size={15} color="var(--red-500)" />}
                   aria-label={t.deleteAria(r.name)}
-                  onClick={() => setTarget(r)}
+                  onClick={() => openDelete(r)}
                 />
               </div>
             );
@@ -257,6 +314,11 @@ export default function SuppliersPage() {
         onCancel={closeForm}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {formError !== null ? (
+            <div role="alert" style={ERROR_BOX}>
+              {errText(formError, t.saveFailed)}
+            </div>
+          ) : null}
           <Field label={t.nameLabel} htmlFor="supplier-name" required>
             <Input
               id="supplier-name"
@@ -282,14 +344,18 @@ export default function SuppliersPage() {
         tone="danger"
         title={target ? t.deleteTitle(target.name) : t.deleteFallbackTitle}
         description={t.deleteDescription}
-        confirmLabel={t.deleteConfirm}
+        confirmLabel={c.delete}
         cancelLabel={c.cancel}
         busy={deleting}
         onConfirm={confirmDelete}
-        onCancel={() => {
-          if (!deleting) setTarget(null);
-        }}
-      />
+        onCancel={closeDelete}
+      >
+        {deleteMessage ? (
+          <div role="alert" style={ERROR_BOX}>
+            {deleteMessage}
+          </div>
+        ) : null}
+      </Dialog>
     </div>
   );
 }
