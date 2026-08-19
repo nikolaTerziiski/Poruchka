@@ -11,13 +11,13 @@ Restaurants order supplies on a repeating, category‑by‑day rhythm (vegetable
 meat Tuesday, drinks Wednesday…). Today this lives in one person's head, so orders get
 missed or rushed.
 
-**Poruchka** lets a restaurant define each good once — _item → supplier → schedule_
+**Poruchka** lets a restaurant define each supplier order once — _items → supplier → order plan_
 (e.g. *Pork Meat → Metro → every Wednesday*). On the due day the responsible person gets
 a **chat message** ("order Pork Meat from Metro today") and confirms with a single tap.
-If they don't, it **re‑nudges hourly** (within quiet hours) and then **escalates**.
+If they don't, it **re‑nudges hourly** (within quiet hours) and then tells the backup person.
 
 - **Reminder channel:** Telegram for the pilot (free, instant); Viber later (commercial‑gated).
-- **Management surface:** this web admin (catalog, schedules, team, notifications, calendar).
+- **Management surface:** this web admin (overview, order plans, catalog, team, settings).
 - **Honest positioning:** the reminder is the cheap wedge; paid value comes later from order
   quantities, spend analytics, and one‑tap supplier ordering. Build lean, validate on a real
   restaurant first, design multi‑tenant from day one.
@@ -65,24 +65,32 @@ packages/
   linking), `supabaseAuthId` (web‑admin login).
 - **Supplier** — `name`, `contact` (e.g. Metro).
 - **Item** — `name`, `supplierId`, `unit` (e.g. Pork Meat, kg).
-- **Schedule** — `itemId`, `assignedUserId`, `reminderTimeOfDay`, `recurrence`, `active`.
-- **ReminderInstance** — one occurrence: `dueDate`, `status`
-  (PENDING/CONFIRMED/ESCALATED/CANCELLED), nudge bookkeeping. Drives the scheduler **and**
-  feeds the calendar.
+- **OrderRule** — an *order plan* (UI: **Order plan** / BG **план**): `supplierId`,
+  `assignedUserId`, `escalationUserId` (the *backup person*), `reminderTimeOfDay`, `recurrence`,
+  `cutoffTime`, `expectedDeliveryOffsetDays`, `active`, `archivedAt`. Grouped per supplier because
+  a restaurant places **one** order with a supplier, not one order per item.
+- **OrderRuleLine** — one item on a plan: `itemId`, `defaultQuantity` (the "usual amount" hint),
+  `unit`, `notes`, `sortOrder`.
+- **OrderRun** — one concrete order occurrence: `dueDate`, `dueAt`, `status`
+  (PENDING/SUBMITTED/ESCALATED/SKIPPED), nudge and postpone bookkeeping. Drives the scheduler
+  **and** feeds the Overview. Its FK to OrderRule is `onDelete: Restrict` — an OrderRun records a
+  placed order and must outlive the plan (plans are retired with `archivedAt`, not deleted).
+- **OrderRunLine** — a *snapshot* of the ordered line (`itemNameSnapshot`, `quantitySnapshot`,
+  `unitSnapshot`), so history stays truthful when the catalog changes later.
 
 **Recurrence** is a discriminated union: `daily` | `weekly {weekdays:[ISO 1–7]}` |
-`interval {everyNDays, anchorDate}`. Fully customizable per item.
+`interval {everyNDays, anchorDate}`. Fully customizable per order plan.
 
 ---
 
 ## 5. Core flows
 
-1. **Onboard** → register → create restaurant → add suppliers → add items → create schedules →
-   invite team & link their Telegram.
-2. **Reminder loop** → scheduler materializes today's reminders → sends Telegram message with a
-   **Done** button → tap confirms (stops nudges) → unconfirmed re‑nudges hourly within quiet
-   hours → escalates at the cap.
-3. **Oversee** → owner watches the **order calendar**: what's due, from which supplier, who's
+1. **Onboard** → register → create restaurant → add suppliers & items (Catalog) → create order
+   plans (Orders) → invite team & link their Telegram.
+2. **Reminder loop** → scheduler materializes today's OrderRuns → sends one Telegram message per
+   supplier basket with **Done** / **Postpone** buttons → Done stops the nudges → unhandled orders
+   re‑nudge hourly within quiet hours → the backup person is told at the cap.
+3. **Oversee** → owner watches the **Overview**: what's due today, from which supplier, who's
    responsible, and live status.
 
 ---
@@ -99,19 +107,18 @@ packages/
 | `/reset-password` | **Reset password** | New password + confirm (from email link). |
 | `/terms`, `/privacy` | **Legal** | Required for the registration agreement checkbox. |
 
-### App (authenticated) — **left sidebar shell**
+### App (authenticated) — **left sidebar shell** (4 primary sections + Settings in the footer)
 | Route | Page | Key elements |
 |-------|------|--------------|
-| `/onboarding` | **Onboarding** (first run) — *planned, not built yet (the route 404s today)* | Name your restaurant, set timezone — only if no tenant yet. Do not link to it until the page exists. |
-| `/dashboard` | **Calendar** (home) | Month/week order calendar; each day shows due items, supplier, assignee, status (pending/confirmed/escalated). |
-| `/suppliers` | **Suppliers** | Table + create/edit/delete (e.g. Metro). |
-| `/items` | **Items / Menu** | Table + create/edit/delete; choose supplier + unit. |
-| `/schedules` | **Schedules** | Table + create/edit; choose item, responsible person, **recurrence picker** (daily / weekly weekday‑picker / every‑N‑days), time of day. |
+| `/onboarding` | **Onboarding** (first run) — *planned, not built yet (the route 404s today)* | Name your restaurant, set timezone — only if no tenant yet. Do not link or redirect to it until the page exists. |
+| `/dashboard` | **Overview** (home) | Today‑first: attention strip for overdue orders, today's orders with a live status timeline (sent / postponed / confirmed by whom), clickable 7‑day week strip. |
+| `/orders` | **Orders** | Order plans (OrderRule) list + create/edit wizard: supplier, items with usual quantities, responsible person, **recurrence picker** (daily / weekly / every‑N‑days), time of day, cutoff, backup person. |
+| `/catalog` | **Catalog** | Suppliers + items merged, master–detail: supplier list left; detail pane with contact, "used in N order plans", and that supplier's items (inline CRUD). |
 | `/team` | **Team** | List people; add staff; **"Connect Telegram"** (shows deep link / QR); remove. |
-| `/settings` | **Notifications** | Quiet hours, re‑nudge interval, max nudges, timezone. |
-| `/profile` | **Profile / Account** | Name, email, password change, sign out. |
+| `/settings` | **Settings** | Quiet hours, re‑nudge interval, max nudges, timezone (notification settings; account section planned). |
 
-**Logout** is a button in the sidebar footer (not a page). **Sign out** also available on Profile.
+Old routes `/schedules`, `/suppliers`, `/items`, `/profile` redirect to the new IA (see `next.config.mjs`).
+**Logout** is a button in the sidebar footer (not a page), next to the Settings link and the signed‑in identity block.
 
 ---
 
@@ -119,8 +126,10 @@ packages/
 
 - **Public pages** use a **top horizontal navbar**: logo left; `Login` (text) + `Register`
   (solid primary button) right. **No left sidebar on marketing pages.**
-- **App pages** use a **persistent left sidebar** (Calendar, Suppliers, Items, Schedules, Team,
-  Notifications, Profile) with the signed‑in email + Sign out in the footer.
+- **App pages** use a **persistent left sidebar** with four primary sections (Overview, Orders,
+  Catalog, Team); Settings, the signed‑in identity, and Sign out live in the sidebar footer.
+  Rationale: nav mirrors the user's mental model, not the DB schema — thin set‑once pages stay
+  out of primary navigation.
 - **Mobile:**
   - App sidebar is **hidden by default and opens via a ☰ (hamburger)** as a slide‑in drawer
     with a dimmed backdrop; closes on navigation or backdrop tap.
@@ -131,6 +140,11 @@ packages/
 ---
 
 ## 8. Design direction (IMPORTANT — avoid the "AI‑generated" look)
+
+> **Bulgarian copy is governed by [`docs/BG-TERMINOLOGY.md`](docs/BG-TERMINOLOGY.md) — binding for
+> the web admin and the bot alike.** One word per concept (план, артикул, напомняне, доставчик),
+> Вие‑form in prose and terse imperative on buttons, „ … “ quotes, no gendered pronouns, and no
+> "ескалация" jargon. Take the term from that table instead of inventing a synonym.
 
 The owner explicitly wants this to **not** look AI‑generated. Hard rules:
 
@@ -151,8 +165,8 @@ The owner explicitly wants this to **not** look AI‑generated. Hard rules:
 - ✅ Crisp 1px borders, generous whitespace, strong type hierarchy, restrained radii (8–12px).
 - ✅ Icons: a single line‑icon set used **sparingly** — **Lucide** (`lucide-react`) is the
   recommended choice (clean, professional, not "AI"). Suggested mapping for the sidebar:
-  Calendar→`CalendarDays`, Suppliers→`Store`, Items→`Package`, Schedules→`Repeat`,
-  Team→`Users`, Notifications→`Bell`, Profile→`User`. Or go icon‑light/text‑only.
+  Overview→`CalendarDays`, Orders→`Repeat`, Catalog→`Store`, Team→`Users`,
+  Settings→`Settings`. Or go icon‑light/text‑only.
 - ✅ Distinct typography (e.g. a characterful display face for headings + a clean sans for body)
   to avoid the default‑Inter‑everywhere feel.
 
@@ -188,6 +202,11 @@ pnpm --filter @poruchka/api db:seed  # idempotent pilot seed
 ```
 
 - **Web admin runs on port 3002** (port 3000 is used by another local app).
+- **Testing the reminder loop:** every order plan row has a "send test reminder" button
+  (sends that plan's real order sheet to *your own* linked Telegram, marked as a test).
+  For end-to-end cadence testing, start the API with `REMINDER_TEST_FAST=1` — new runs
+  send immediately, re-nudges fire every minute, quiet hours are ignored. Dev-only:
+  the flag is hard-disabled when `NODE_ENV=production`.
 - Secrets live in gitignored env files (`apps/api/.env`, `apps/web/.env.local`); **never** commit
   real keys — `.env.example` holds placeholders only (its `[api]` lines go in `apps/api/.env`, its
   `[web]` lines in `apps/web/.env.local`). The web app needs `NEXT_PUBLIC_SUPABASE_URL`,

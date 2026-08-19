@@ -1,50 +1,98 @@
-/** Localized chat copy for the bot (English + Bulgarian), chosen per tenant. */
+/**
+ * Localized chat copy for the bot (English + Bulgarian), chosen per tenant.
+ *
+ * The Bulgarian side follows docs/BG-TERMINOLOGY.md: an OrderRule is a "план"
+ * (never график/разписание), an Item is an "артикул", a nudge is a "напомняне",
+ * quotes are „ … “, and nothing here says "ескалация" to the person reading it.
+ */
 
 export type Lang = "en" | "bg";
 
 function L(lang: string | null | undefined): Lang {
-  return lang === "en" ? "en" : "bg";
+  return lang === "en" ? "en" : "bg"; // default Bulgarian
 }
 
-/** A supplier-level order reminder with all item quantities in one message. */
+export interface OrderLineCopy {
+  name: string;
+  quantity?: number | null;
+  unit?: string | null;
+  note?: string | null;
+}
+
+/** One line of the order reminder. Quantities are optional "usual amount" hints. */
+function formatLine(lang: Lang, l: OrderLineCopy): string {
+  const usual = lang === "bg" ? "обичайно" : "usual";
+  const qty =
+    l.quantity != null ? ` (${usual}: ${l.quantity}${l.unit ? ` ${l.unit}` : ""})` : "";
+  const note = l.note && l.note.trim() ? `  📝 ${l.note.trim()}` : "";
+  return `• ${l.name}${qty}${note}`;
+}
+
+/** The detailed daily order reminder for a whole supplier basket. */
 export function orderReminderMessage(
   lang: string,
-  p: {
-    supplier: string;
-    cutoffTime?: string | null;
-    lines: Array<{
-      item: string;
-      quantity?: string | null;
-      unit?: string | null;
-      note?: string | null;
-    }>;
-  },
+  p: { supplier: string; lines: OrderLineCopy[]; cutoffTime?: string | null },
 ): string {
-  const lines = p.lines
-    .map((line) => {
-      const amount = [line.quantity, line.unit].filter(Boolean).join(" ");
-      const note = line.note?.trim() ? ` — ${line.note.trim()}` : "";
-      return `• ${line.item}${amount ? ` — ${amount}` : ""}${note}`;
-    })
-    .join("\n");
-  if (L(lang) === "bg") {
-    const cutoff = p.cutoffTime ? `\nКраен час: ${p.cutoffTime}` : "";
-    return `🛒 Поръчка към ${p.supplier}\n${lines}${cutoff}\n\nНатиснете „Изпратена“, след като подадете поръчката.`;
+  const selectedLang = L(lang);
+  const lines = p.lines.map((line) => formatLine(selectedLang, line)).join("\n");
+  if (selectedLang === "bg") {
+    const cutoff = p.cutoffTime ? `\n⏳ Подайте до ${p.cutoffTime}.` : "";
+    return `🛒 Проверете поръчката към ${p.supplier}:\n${lines}${cutoff}\nНатиснете „Готово“, след като я обработите.`;
   }
-  const cutoff = p.cutoffTime ? `\nCutoff: ${p.cutoffTime}` : "";
-  return `🛒 Order from ${p.supplier}\n${lines}${cutoff}\n\nTap “Sent” once you have placed the order.`;
+  const cutoff = p.cutoffTime ? `\n⏳ Place it by ${p.cutoffTime}.` : "";
+  return `🛒 Check the supplier order for ${p.supplier}:\n${lines}${cutoff}\nTap “Done” once you've handled it.`;
 }
 
+/** Prefixed to a manually triggered test reminder so nobody mistakes it for a real order. */
+export function testReminderIntro(lang: string): string {
+  return L(lang) === "bg"
+    ? "🧪 Тестово напомняне — така ще изглежда поръчката:"
+    : "🧪 Test reminder — this is how the order will look:";
+}
+
+/** Label on the Done button. */
+export function doneButtonLabel(lang: string): string {
+  return L(lang) === "bg" ? "✅ Готово" : "✅ Done";
+}
+
+/**
+ * Older name for the same primary control. It delegates on purpose: the canon
+ * forbids one button carrying two different words, so there is exactly one
+ * string for "the order is placed".
+ */
 export function confirmButtonLabel(lang: string): string {
-  return L(lang) === "bg" ? "✓ Изпратена" : "✓ Sent";
+  return doneButtonLabel(lang);
+}
+
+/** Label on the Postpone button. */
+export function postponeButtonLabel(lang: string): string {
+  return L(lang) === "bg" ? "⏰ Отложи" : "⏰ Postpone";
+}
+
+export type SnoozeChoice = "1h" | "tonight" | "tomorrow";
+
+export const SNOOZE_CHOICES: SnoozeChoice[] = ["1h", "tonight", "tomorrow"];
+
+/** Labels for the snooze options shown after tapping Postpone. */
+export function snoozeOptionLabel(lang: string, choice: SnoozeChoice): string {
+  const bg = L(lang) === "bg";
+  switch (choice) {
+    case "1h":
+      return bg ? "След 1 час" : "In 1 hour";
+    case "tonight":
+      return bg ? "Довечера" : "Tonight";
+    case "tomorrow":
+      return bg ? "Утре" : "Tomorrow";
+  }
+}
+
+/** One-tap "remind me in an hour" shortcut, where the full menu is too heavy. */
+export function snoozeButtonLabel(lang: string): string {
+  return L(lang) === "bg" ? "Напомни след 1 час" : "Remind me in 1 hour";
 }
 
 export function supplierTextButtonLabel(lang: string): string {
   return L(lang) === "bg" ? "Текст за доставчика" : "Supplier text";
-}
-
-export function snoozeButtonLabel(lang: string): string {
-  return L(lang) === "bg" ? "Напомни след 1 час" : "Remind me in 1 hour";
 }
 
 export function skipButtonLabel(lang: string, recurrenceType?: string): string {
@@ -58,6 +106,7 @@ export function skipButtonLabel(lang: string, recurrenceType?: string): string {
   return "Skip this order";
 }
 
+/** Ready-to-send text the responsible person can forward to the supplier. */
 export function supplierOrderMessage(
   lang: string,
   p: {
@@ -120,14 +169,32 @@ export function cancelButtonLabel(lang: string): string {
   return L(lang) === "bg" ? "Отказ" : "Cancel";
 }
 
+/** Chat message sent after the order is confirmed. */
 export function confirmedMessage(lang: string): string {
   return L(lang) === "bg"
-    ? "✓ Поръчката е отбелязана като изпратена. Потвърждението и доставката могат да се проследят в приложението."
-    : "✓ Order marked as sent. Supplier confirmation and delivery can be tracked in the app.";
+    ? "✅ Отбелязано като готово — можете да проследите състоянието в приложението."
+    : "✅ Marked as done — you can track the order status in the app.";
 }
 
+/** Short popup shown on the tapped Done button. */
 export function confirmToast(lang: string): string {
-  return L(lang) === "bg" ? "Изпратена ✓" : "Sent ✓";
+  return L(lang) === "bg" ? "Готово ✓" : "Done ✓";
+}
+
+export function alreadyDoneToast(lang: string): string {
+  return L(lang) === "bg" ? "Вече е отбелязано ✓" : "Already done ✓";
+}
+
+/** Popup shown when the order was skipped and can no longer be confirmed. */
+export function skippedToast(lang: string): string {
+  return L(lang) === "bg" ? "Поръчката е пропусната" : "This order was skipped";
+}
+
+/** Popup confirming a postponement, e.g. "Postponed: Tomorrow". */
+export function snoozedToast(lang: string, choice: SnoozeChoice): string {
+  return L(lang) === "bg"
+    ? `Отложено: ${snoozeOptionLabel(lang, choice)}`
+    : `Postponed: ${snoozeOptionLabel(lang, choice)}`;
 }
 
 export function undoButtonLabel(lang: string): string {
@@ -150,14 +217,14 @@ export function privateChatOnlyMessage(lang: string): string {
     : "Open your personal link in a private chat with the bot to connect your account.";
 }
 
-export function alreadyDoneToast(lang: string): string {
-  return L(lang) === "bg" ? "Вече е отбелязана ✓" : "Already marked ✓";
-}
-
 export function quantitiesRequiredToast(lang: string): string {
   return L(lang) === "bg"
     ? "Първо въведете количества — натиснете „Количества“"
     : "Enter quantities first — tap “Quantities”";
+}
+
+export function notYourOrderToast(lang: string): string {
+  return L(lang) === "bg" ? "Тази поръчка е възложена на друг човек" : "This order is assigned to someone else";
 }
 
 /* ── Quantity editing, straight from the chat ─────────────────────────────── */
@@ -232,7 +299,7 @@ export function applyKeypadKey(entry: string, key: string): string {
   const next = entry === "0" ? key : `${entry}${key}`;
   const [whole, fraction] = next.split(".");
   if (whole.length > 6) return entry; // matches quantitySchema max 999999
-  if (fraction !== undefined && fraction.length > 3) return entry; // Decimal(12,3)
+  if (fraction !== undefined && fraction.length > 3) return entry; // 3 decimal places
   return next;
 }
 
@@ -264,10 +331,10 @@ export function quantityInvalidToast(lang: string): string {
   return L(lang) === "bg" ? "Невалидно количество" : "Invalid quantity";
 }
 
-export function notYourOrderToast(lang: string): string {
-  return L(lang) === "bg" ? "Тази поръчка е възложена на друг човек" : "This order is assigned to someone else";
-}
-
+/**
+ * Sent to the backup person when the responsible one has not reacted. Deliberately
+ * plain: the canon retires "ескалация" as vocabulary a kitchen manager will not parse.
+ */
 export function escalationMessage(
   lang: string,
   p: { supplier: string; assignee: string; dueTime: string },
@@ -277,8 +344,45 @@ export function escalationMessage(
     : `⚠ The ${p.supplier} order assigned to ${p.assignee} for ${p.dueTime} has not been sent.`;
 }
 
+/**
+ * Reply to a bare /start — no link code, so no tenant and no known language.
+ * L() falls back to Bulgarian, which is the right default for the pilot.
+ * "линк" matches the word the Team page uses for the same thing, and the person
+ * reading this is staff who never open the web app, so it points at the owner
+ * rather than at an admin screen they have no account for.
+ */
+export function startWithoutCodeMessage(lang?: string): string {
+  return L(lang) === "bg"
+    ? "Добре дошли в Poruchka. За да свържете този чат, отворете личния линк, който получавате от собственика на ресторанта."
+    : "Welcome to Poruchka. To connect this chat, open the personal link you get from the restaurant owner.";
+}
+
+/**
+ * Reply when /start carries a code that no longer resolves. Also languageless.
+ * One sentence covers both causes (never valid / already used) — the reader's
+ * next step is identical either way, and the distinction only invites worry.
+ */
+export function invalidLinkMessage(lang?: string): string {
+  return L(lang) === "bg"
+    ? "Този линк вече не е валиден. Помолете собственика за нов линк за свързване."
+    : "This link is no longer valid. Ask the owner for a new connection link.";
+}
+
+/** Toast for a tap on a test reminder, which deliberately changes nothing. */
+export function testConfirmedToast(lang?: string): string {
+  return L(lang) === "bg" ? "Тестът е успешен ✓" : "Test confirmed ✓";
+}
+
+/** Reply after a staff member links their chat via the deep link. */
 export function linkedMessage(lang: string, name: string): string {
   return L(lang) === "bg"
-    ? `✓ Готово, ${name}! Тук ще получавате напомнянията за поръчките.`
-    : `✓ Connected, ${name}. You'll receive your ordering reminders here.`;
+    ? `✅ Свързано, ${name}. Тук ще получавате напомнянията за поръчки.`
+    : `✅ Connected, ${name}. You'll receive your ordering reminders here.`;
+}
+
+/** Reply when a chat tries to link but is already connected to another member. */
+export function chatAlreadyLinkedMessage(lang: string): string {
+  return L(lang) === "bg"
+    ? "Този Telegram акаунт вече е свързан с друг човек от екипа. Помолете собственика първо да прекрати старата връзка."
+    : "This Telegram account is already linked to another team member. Ask the owner to unlink it first.";
 }

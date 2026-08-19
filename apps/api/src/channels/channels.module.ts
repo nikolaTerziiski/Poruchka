@@ -4,6 +4,7 @@ import { Bot } from "grammy";
 import { NOTIFICATION_CHANNEL } from "./notification-channel.port";
 import { TelegramChannel } from "./telegram/telegram.channel";
 import { TelegramBotService } from "./telegram/telegram.bot.service";
+import { TelegramOrderActionService } from "./telegram/telegram-order-action.service";
 
 @Module({
   providers: [
@@ -17,6 +18,7 @@ import { TelegramBotService } from "./telegram/telegram.bot.service";
       inject: [ConfigService],
     },
     TelegramChannel,
+    TelegramOrderActionService,
     { provide: NOTIFICATION_CHANNEL, useExisting: TelegramChannel },
     TelegramBotService,
   ],

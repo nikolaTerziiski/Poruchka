@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { AlertTriangle, Check } from "lucide-react";
-import { supabase } from "@/lib/supabaseClient";
+import { supabase, isSupabaseConfigured } from "@/lib/supabaseClient";
 import { useTr, useCommon } from "@/lib/i18n";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { Button } from "@/components/ds/Button";
@@ -15,6 +15,7 @@ const M = {
   en: {
     title: "Reset your password",
     subtitle: "We'll email you a link to set a new one",
+    notConfigured: "The app isn't fully set up yet. Please get in touch with us.",
     emailPlaceholder: "you@restaurant.bg",
     sentPrefix: "If an account exists for",
     sentSuffix:
@@ -32,6 +33,7 @@ const M = {
   bg: {
     title: "Възстановяване на паролата",
     subtitle: "Ще ви изпратим имейл с връзка за задаване на нова",
+    notConfigured: "Приложението не е настроено докрай. Свържете се с нас.",
     emailPlaceholder: "you@restaurant.bg",
     sentPrefix: "Ако съществува профил за",
     sentSuffix:
@@ -143,6 +145,11 @@ export default function ForgotPasswordPage() {
         </>
       }
     >
+      {!isSupabaseConfigured && (
+        <div style={{ marginBottom: 16 }}>
+          <Notice tone="warning">{t.notConfigured}</Notice>
+        </div>
+      )}
       {sent ? (
         <Notice tone="success">
           {t.sentPrefix} <strong>{email}</strong>
@@ -164,7 +171,13 @@ export default function ForgotPasswordPage() {
             />
           </Field>
           {errKey && <Notice tone="error">{t.errors[errKey]}</Notice>}
-          <Button type="submit" variant="primary" size="lg" disabled={loading} style={{ width: "100%", marginTop: 2 }}>
+          <Button
+            type="submit"
+            variant="primary"
+            size="lg"
+            disabled={loading || !isSupabaseConfigured}
+            style={{ width: "100%", marginTop: 2 }}
+          >
             {loading ? t.sending : t.sendLink}
           </Button>
         </form>

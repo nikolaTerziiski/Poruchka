@@ -15,10 +15,12 @@ import { Prisma } from "@prisma/client";
 import { createItemSchema } from "@poruchka/shared";
 import { SupabaseAuthGuard } from "../auth/supabase-auth.guard";
 import { TenantId } from "../auth/request-context";
+import { Roles } from "../auth/roles.decorator";
+import { RolesGuard } from "../auth/roles.guard";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { PrismaService } from "../prisma/prisma.service";
 
-@UseGuards(SupabaseAuthGuard)
+@UseGuards(SupabaseAuthGuard, RolesGuard)
 @Controller("items")
 export class ItemsController {
   constructor(private readonly prisma: PrismaService) {}
@@ -28,6 +30,7 @@ export class ItemsController {
     return this.prisma.item.findMany({ where: { tenantId }, orderBy: { name: "asc" }, include: { supplier: true } });
   }
 
+  @Roles("OWNER", "MANAGER")
   @Post()
   async create(
     @TenantId() tenantId: string,
@@ -39,6 +42,7 @@ export class ItemsController {
     });
   }
 
+  @Roles("OWNER", "MANAGER")
   @Patch(":id")
   async update(
     @TenantId() tenantId: string,
@@ -50,6 +54,7 @@ export class ItemsController {
     return this.prisma.item.update({ where: { id }, data: dto });
   }
 
+  @Roles("OWNER", "MANAGER")
   @Delete(":id")
   async remove(@TenantId() tenantId: string, @Param("id") id: string) {
     await this.ensureOwned(tenantId, id);

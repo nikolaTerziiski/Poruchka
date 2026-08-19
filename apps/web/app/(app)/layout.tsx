@@ -4,13 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  CalendarDays,
+  LayoutDashboard,
   ClipboardList,
   Store,
-  Package,
-  Repeat,
   Users,
-  Bell,
+  Settings,
   LogOut,
   Menu,
   X,
@@ -18,48 +16,25 @@ import {
 import { supabase, isSupabaseConfigured } from "@/lib/supabaseClient";
 import { useTr } from "@/lib/i18n";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
-import { DeliveryHealthBanner } from "@/components/DeliveryHealthBanner";
 
-type NavKey = "calendar" | "orders" | "suppliers" | "items" | "schedules" | "team" | "notifications";
-type GroupKey = "groupDaily" | "groupSetup";
+type NavKey = "overview" | "orders" | "catalog" | "team";
 
-/**
- * The sidebar is split into "what is happening now" and "what you set up once".
- * Without that split three of the seven entries (Календар, Поръчки, Планове) all
- * read as "orders" to a restaurant owner and the list has to be re-read every time.
- * Grouping is deliberately flat — no expanding sub-trees, which lose this audience.
- */
-const NAV_GROUPS: { key: GroupKey; items: { href: string; key: NavKey; Icon: typeof CalendarDays }[] }[] = [
-  {
-    key: "groupDaily",
-    items: [
-      { href: "/dashboard", key: "calendar", Icon: CalendarDays },
-      { href: "/orders", key: "orders", Icon: ClipboardList },
-    ],
-  },
-  {
-    key: "groupSetup",
-    items: [
-      { href: "/suppliers", key: "suppliers", Icon: Store },
-      { href: "/items", key: "items", Icon: Package },
-      { href: "/schedules", key: "schedules", Icon: Repeat },
-      { href: "/team", key: "team", Icon: Users },
-      { href: "/settings", key: "notifications", Icon: Bell },
-    ],
-  },
+const NAV: { href: string; key: NavKey; Icon: typeof LayoutDashboard }[] = [
+  { href: "/dashboard", key: "overview", Icon: LayoutDashboard },
+  { href: "/orders", key: "orders", Icon: ClipboardList },
+  { href: "/catalog", key: "catalog", Icon: Store },
+  { href: "/team", key: "team", Icon: Users },
 ];
+
+const SESSION_TIMEOUT_MS = 8000;
 
 const M = {
   en: {
-    groupDaily: "Day to day",
-    groupSetup: "Setup",
-    calendar: "Calendar",
+    overview: "Overview",
     orders: "Orders",
-    suppliers: "Suppliers",
-    items: "Items",
-    schedules: "Order plans",
+    catalog: "Catalog",
     team: "Team",
-    notifications: "Reminders",
+    settings: "Settings",
     loading: "Loading…",
     yourRestaurant: "Your restaurant",
     signOut: "Sign out",
@@ -69,15 +44,11 @@ const M = {
     skipToContent: "Skip to content",
   },
   bg: {
-    groupDaily: "Всеки ден",
-    groupSetup: "Настройка",
-    calendar: "Календар",
+    overview: "Преглед",
     orders: "Поръчки",
-    suppliers: "Доставчици",
-    items: "Артикули",
-    schedules: "Планове",
+    catalog: "Каталог",
     team: "Екип",
-    notifications: "Напомняния",
+    settings: "Настройки",
     loading: "Зареждане…",
     yourRestaurant: "Вашият ресторант",
     signOut: "Изход",
@@ -105,30 +76,66 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       setReady(true);
       return;
     }
-    supabase.auth.getSession().then(({ data }) => {
-      if (!data.session) {
+    if (!supabase) return;
+    const client = supabase;
+    let cancelled = false;
+
+    async function resolveSession() {
+      try {
+        const result = await Promise.race([
+          client.auth.getSession(),
+          new Promise<"timeout">((resolve) => {
+            window.setTimeout(() => resolve("timeout"), SESSION_TIMEOUT_MS);
+          }),
+        ]);
+        if (cancelled) return;
+        if (result === "timeout" || !result.data.session) {
+          setReady(true);
+          router.replace("/login");
+          return;
+        }
+        setEmail(result.data.session.user.email ?? null);
+        const rn = (result.data.session.user.user_metadata as { restaurant_name?: string })?.restaurant_name;
+        if (rn) setRestaurant(rn);
+        setReady(true);
+      } catch {
+        if (!cancelled) {
+          setReady(true);
+          router.replace("/login");
+        }
+      }
+    }
+
+    void resolveSession();
+    // Also fires on USER_UPDATED (email change, restaurant rename) — keep the
+    // sidebar identity fresh. Must stay synchronous: awaiting supabase calls
+    // inside this callback can deadlock the client.
+    const { data: sub } = client.auth.onAuthStateChange((_e, session) => {
+      if (!session) {
         router.replace("/login");
         return;
       }
-      setEmail(data.session.user.email ?? null);
-      const rn = (data.session.user.user_metadata as { restaurant_name?: string })?.restaurant_name;
+      setEmail(session.user.email ?? null);
+      const rn = (session.user.user_metadata as { restaurant_name?: string })?.restaurant_name;
       if (rn) setRestaurant(rn);
-      setReady(true);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-      if (!session) router.replace("/login");
-    });
-    return () => sub.subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      sub.subscription.unsubscribe();
+    };
   }, [router]);
 
   useEffect(() => {
     setOpen(false);
   }, [pathname]);
 
-  // Drawer keyboard contract: Escape closes it, focus moves to the close button on
-  // open and back to the hamburger on close. The `drawerWasOpen` latch is what keeps
-  // the desktop sidebar out of this — `open` is also reset on every navigation, and
-  // without the latch that would yank focus to a hidden button on each route change.
+  // Drawer keyboard contract. It exists because the closed drawer is now
+  // visibility:hidden (see the stylesheet below): focus must never be left inside
+  // something the browser has just made inert. Escape closes it, focus moves to the
+  // close button on open and back to the hamburger on close. The `drawerWasOpen`
+  // latch is what keeps the desktop sidebar out of this — `open` is also reset on
+  // every navigation, and without the latch that would yank focus to a hidden
+  // button on each route change.
   useEffect(() => {
     if (open) {
       drawerWasOpen.current = true;
@@ -155,6 +162,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }, [open]);
 
   async function signOut() {
+    if (!supabase) return;
     await supabase.auth.signOut();
     router.replace("/login");
   }
@@ -177,6 +185,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       .join("")
       .toUpperCase() || "P";
 
+  const isSettings = pathname === "/settings";
+
   return (
     <div className="app-root">
       <style>{`
@@ -190,35 +200,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         .skip-link { position:fixed; left:-9999px; top:0; }
         .skip-link:focus { left:12px; top:12px; z-index:500; background:var(--surface-card); color:var(--text-strong); border:1px solid var(--border-default); border-radius:var(--radius-md); padding:10px 14px; font-size:14px; font-weight:600; text-decoration:none; }
 
-        .app-nav-group { display:flex; flex-direction:column; gap:2px; }
-        .app-nav-group + .app-nav-group { margin-top:16px; }
-        .app-nav-label { display:block; padding:0 12px 6px; }
-
-        .app-nav-link { display:flex; align-items:center; gap:11px; padding:9px 12px; border-radius:var(--radius-md); text-decoration:none; font-size:14px; font-weight:500; background:transparent; color:var(--text-body); transition:background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
-        .app-nav-link:hover { background:var(--surface-hover); color:var(--text-strong); text-decoration:none; }
-        .app-nav-link:active { background:var(--surface-inset); }
-        .app-nav-link[data-active="true"] { font-weight:600; background:var(--brand-50); color:var(--brand-700); }
-        .app-nav-link[data-active="true"]:hover { background:var(--brand-100); color:var(--brand-800); }
-
-        .app-account-link { display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:var(--radius-md); text-decoration:none; background:transparent; transition:background var(--dur-fast) var(--ease-out); }
-        .app-account-link:hover { background:var(--surface-hover); text-decoration:none; }
-
-        .app-signout { display:flex; align-items:center; gap:9px; padding:8px 10px; border-radius:var(--radius-md); border:none; background:transparent; cursor:pointer; color:var(--text-muted); font-size:13px; font-weight:500; transition:background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
-        .app-signout:hover { background:var(--surface-hover); color:var(--text-strong); }
-
-        /* On the drawer a tapped item would otherwise keep its hover fill and read as
-           a stuck selection long after the finger has gone. */
-        @media (hover: none) {
-          .app-nav-link:hover { background:transparent; color:var(--text-body); }
-          .app-nav-link[data-active="true"]:hover { background:var(--brand-50); color:var(--brand-700); }
-          .app-account-link:hover { background:transparent; }
-          .app-signout:hover { background:transparent; color:var(--text-muted); }
-        }
-
         @media (max-width: 1023px) {
           .app-root { flex-direction:column; }
           .app-topbar { display:flex; align-items:center; gap:12px; height:56px; padding:0 16px; position:sticky; top:0; z-index:150; background:color-mix(in srgb, var(--surface-page) 92%, transparent); backdrop-filter:blur(8px); border-bottom:1px solid var(--border-subtle); }
-          /* visibility:hidden takes the closed drawer's 13 controls out of BOTH the tab
+          /* visibility:hidden takes the closed drawer's controls out of BOTH the tab
              order and the accessibility tree; translateX alone left them focusable
              off-screen. The split transition is load-bearing: visible applies instantly
              on open, and is delayed one duration on close so the slide-out still plays. */
@@ -265,39 +250,54 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </button>
         </div>
 
-        <nav aria-label={t.mainNav} style={{ flex: 1, padding: "4px 12px" }}>
-          {NAV_GROUPS.map((group) => (
-            <div key={group.key} className="app-nav-group" role="group" aria-labelledby={`app-nav-${group.key}`}>
-              <span id={`app-nav-${group.key}`} className="eyebrow app-nav-label">
-                {t[group.key]}
-              </span>
-              {group.items.map(({ href, key, Icon }) => {
-                const on = pathname === href || pathname.startsWith(`${href}/`);
-                return (
-                  <Link
-                    key={href}
-                    href={href}
-                    className="app-nav-link"
-                    data-active={on ? "true" : "false"}
-                    aria-current={on ? "page" : undefined}
-                  >
-                    {/* No `color` prop on purpose: lucide renders it as a literal `stroke`
-                        attribute, which would freeze the glyph and kill the hover tint.
-                        Without it the icon defaults to currentColor and follows the link. */}
-                    <Icon size={18} />
-                    {t[key]}
-                  </Link>
-                );
-              })}
-            </div>
-          ))}
+        <nav aria-label={t.mainNav} style={{ flex: 1, padding: "4px 12px", display: "flex", flexDirection: "column", gap: 2 }}>
+          {NAV.map(({ href, key, Icon }) => {
+            const on = pathname === href || pathname.startsWith(`${href}/`);
+            return (
+              <Link
+                key={href}
+                href={href}
+                aria-current={on ? "page" : undefined}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 11,
+                  padding: "9px 12px",
+                  borderRadius: "var(--radius-md)",
+                  textDecoration: "none",
+                  fontSize: 14,
+                  fontWeight: on ? 600 : 500,
+                  background: on ? "var(--brand-50)" : "transparent",
+                  color: on ? "var(--brand-700)" : "var(--text-body)",
+                }}
+              >
+                <Icon size={18} color={on ? "var(--brand-600)" : "var(--text-muted)"} />
+                {t[key]}
+              </Link>
+            );
+          })}
         </nav>
 
         <div style={{ borderTop: "1px solid var(--border-subtle)", padding: 12 }}>
-          {/* No standalone /profile route exists yet, so this card points at Settings —
-              but it must NOT paint an active state, or /settings lights up twice at once
-              (here and on the Напомняния nav item). Restore it when /profile ships. */}
-          <Link href="/settings" className="app-account-link">
+          <Link
+            href="/settings"
+            aria-current={isSettings ? "page" : undefined}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 11,
+              padding: "8px 10px",
+              borderRadius: "var(--radius-md)",
+              textDecoration: "none",
+              fontSize: 13.5,
+              fontWeight: isSettings ? 600 : 500,
+              background: isSettings ? "var(--brand-50)" : "transparent",
+              color: isSettings ? "var(--brand-700)" : "var(--text-body)",
+            }}
+          >
+            <Settings size={16} color={isSettings ? "var(--brand-600)" : "var(--text-muted)"} /> {t.settings}
+          </Link>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px" }}>
             <span style={{ width: 30, height: 30, borderRadius: "var(--radius-pill)", background: "var(--brand-100)", color: "var(--brand-700)", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 600, flex: "none" }}>
               {initials}
             </span>
@@ -305,9 +305,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: "var(--text-strong)", whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>{displayName}</span>
               <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>{email ?? ""}</span>
             </span>
-          </Link>
+          </div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6, paddingLeft: 4 }}>
-            <button className="app-signout" onClick={signOut}>
+            <button
+              onClick={signOut}
+              style={{ display: "flex", alignItems: "center", gap: 9, padding: "8px 10px", borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", color: "var(--text-muted)", fontSize: 13, fontWeight: 500 }}
+            >
               <LogOut size={16} /> {t.signOut}
             </button>
             <LanguageSwitcher compact />
@@ -315,10 +318,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      <main id="main" tabIndex={-1} className="app-main">
-        <DeliveryHealthBanner />
-        {children}
-      </main>
+      <main id="main" tabIndex={-1} className="app-main">{children}</main>
     </div>
   );
 }

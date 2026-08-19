@@ -4,5 +4,8 @@ module.exports = {
   testEnvironment: "node",
   rootDir: "src",
   testRegex: ".*\\.spec\\.ts$",
+  moduleNameMapper: {
+    "^@poruchka/shared$": "<rootDir>/../../../packages/shared/src",
+  },
   moduleFileExtensions: ["ts", "js", "json"],
 };

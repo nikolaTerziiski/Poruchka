@@ -1,5 +1,7 @@
 import {
   applyKeypadKey,
+  confirmedMessage,
+  orderReminderMessage,
   parseQuantityEntry,
   quantityEntryMessage,
   quantityFromEntry,
@@ -9,6 +11,58 @@ import {
   supplierOrderMessage,
 } from "./bot-copy";
 
+describe("bot order reminder copy", () => {
+  it("shows quantities only as optional usual-amount hints", () => {
+    const text = orderReminderMessage("en", {
+      supplier: "METRO",
+      cutoffTime: "11:00",
+      lines: [
+        { name: "Pork neck", quantity: 5, unit: "kg" },
+        { name: "Tomatoes", quantity: null, unit: "kg" },
+      ],
+    });
+
+    expect(text).toContain("Check the supplier order for METRO");
+    expect(text).toContain("• Pork neck (usual: 5 kg)");
+    expect(text).toContain("• Tomatoes");
+    expect(text).not.toContain("Tomatoes (usual:");
+    expect(text).not.toContain("Tomatoes — kg");
+    expect(text).toContain("Tap “Done” once you've handled it.");
+  });
+
+  it("localizes usual-amount hints in Bulgarian", () => {
+    const text = orderReminderMessage("bg", {
+      supplier: "Плод и зеленчук",
+      lines: [
+        { name: "Домати", quantity: 8, unit: "кг" },
+        { name: "Магданоз", unit: "връзка" },
+      ],
+    });
+
+    expect(text).toContain("Проверете поръчката към Плод и зеленчук");
+    expect(text).toContain("• Домати (обичайно: 8 кг)");
+    expect(text).toContain("• Магданоз");
+    expect(text).not.toContain("Магданоз (обичайно:");
+  });
+
+  it("uses Bulgarian quotation marks around the button name", () => {
+    // docs/BG-TERMINOLOGY.md style rule 3: „ … “ in Bulgarian, never " … ".
+    const text = orderReminderMessage("bg", {
+      supplier: "Метро",
+      lines: [{ name: "Домати", quantity: 8, unit: "кг" }],
+    });
+
+    expect(text).toContain("„Готово“");
+    expect(text).not.toContain('"Готово"');
+  });
+
+  it("confirms completion without promising exact submitted quantities", () => {
+    expect(confirmedMessage("en")).toContain("Marked as done");
+    expect(confirmedMessage("en")).not.toContain("Ordered");
+    expect(confirmedMessage("bg")).toContain("Отбелязано като готово");
+  });
+});
+
 describe("bot copy for occurrence actions", () => {
   it("explains daily and weekly skips without implying that the plan changes", () => {
     expect(skipButtonLabel("en", "daily")).toBe("Skip today");
@@ -17,6 +71,8 @@ describe("bot copy for occurrence actions", () => {
     // OrderRule a план / "order plan" and forbids the timetable words.
     expect(skippedMessage("en", "daily")).toContain("Tomorrow's order plan remains active");
     expect(skippedMessage("en", "weekly")).toContain("next order in the plan remains active");
+    expect(skippedMessage("bg", "daily")).toContain("по плана");
+    expect(skippedMessage("bg", "daily")).not.toContain("график");
   });
 
   it("builds a supplier-ready Bulgarian message with quantities and notes", () => {
@@ -63,7 +119,7 @@ describe("quantity keypad", () => {
     expect(type("0.5")).toBe("0.5");
   });
 
-  it("respects the Decimal(12,3) and max-quantity bounds", () => {
+  it("respects the whole-digit and decimal-place bounds", () => {
     expect(applyKeypadKey("999999", "9")).toBe("999999"); // 7th whole digit rejected
     expect(applyKeypadKey("1.234", "5")).toBe("1.234"); // 4th decimal rejected
   });

@@ -1,1037 +1,1437 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import {
-  AlertTriangle,
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  ClipboardCopy,
-  ClipboardList,
-  Clock3,
-  SkipForward,
-  Truck,
-} from "lucide-react";
-import type { OrderRunStatus, ReceivingException, Recurrence } from "@poruchka/shared";
-import { Badge } from "@/components/ds/Badge";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { Check, ChevronDown, ChevronUp, Plus, Pencil, Send, Trash2, Repeat } from "lucide-react";
 import { Button } from "@/components/ds/Button";
-import { Card } from "@/components/ds/Card";
-import { Dialog } from "@/components/ds/Dialog";
-import { EmptyState } from "@/components/ds/EmptyState";
 import { Field } from "@/components/ds/Field";
-import { Input } from "@/components/ds/Input";
-import { PageHead } from "@/components/ds/PageHead";
 import { Select } from "@/components/ds/Select";
+import { Badge } from "@/components/ds/Badge";
+import { Table } from "@/components/ds/Table";
+import { EmptyState } from "@/components/ds/EmptyState";
+import { Dialog } from "@/components/ds/Dialog";
+import { PageHead } from "@/components/ds/PageHead";
 import { api } from "@/lib/api";
-import { apiErrorText, useApiError, useCommon, useLang, useTr, type Lang } from "@/lib/i18n";
+import type { Recurrence } from "@poruchka/shared";
+import { useTr, useCommon, useLang, useApiError, type Lang } from "@/lib/i18n";
 
-type DecimalValue = string | number | null;
-
-interface OrderLine {
+interface Supplier {
   id: string;
-  itemId: string;
-  itemNameSnapshot: string;
-  quantitySnapshot: DecimalValue;
-  unitSnapshot: string | null;
-  notesSnapshot: string | null;
-  receivedQuantity: DecimalValue;
-  unitPrice: DecimalValue;
-  exceptionType: ReceivingException | null;
-  exceptionNote: string | null;
-  previousUnitPrice: number | null;
-  priceChangePercent: number | null;
+  name: string;
 }
 
-interface OrderRun {
+interface Item {
   id: string;
-  dueDate: string;
-  dueAt: string;
-  expectedDeliveryDate: string | null;
-  status: OrderRunStatus;
-  supplierConfirmedAt: string | null;
-  supplierReference: string | null;
-  receivedAt: string | null;
-  receivingNote: string | null;
-  supplier: { id: string; name: string; contact: string | null };
-  assignedUser: { id: string; name: string };
-  submittedByUser: { id: string; name: string } | null;
-  orderRule: { cutoffTime: string | null; recurrence: Recurrence };
-  lines: OrderLine[];
+  name: string;
+  unit: string | null;
+  notes: string | null;
+  supplierId: string;
+  supplier: { id: string; name: string };
+}
+
+interface TeamMember {
+  id: string;
+  name: string;
+}
+
+interface OrderRuleLine {
+  id: string;
+  itemId: string;
+  defaultQuantity: number | null;
+  unit: string | null;
+  notes: string | null;
+  sortOrder: number;
+  item: { id: string; name: string; unit: string | null };
+}
+
+interface OrderRule {
+  id: string;
+  supplierId: string;
+  assignedUserId: string;
+  escalationUserId: string | null;
+  reminderTimeOfDay: string;
+  recurrence: Recurrence;
+  cutoffTime: string | null;
+  expectedDeliveryOffsetDays: number | null;
+  active: boolean;
+  supplier: Supplier;
+  assignedUser: TeamMember;
+  escalationUser: TeamMember | null;
+  lines: OrderRuleLine[];
+}
+
+interface DraftLine {
+  itemId: string;
+  defaultQuantity: string;
+  unit: string;
+  notes: string;
+}
+
+type Mode = "daily" | "weekly" | "interval";
+type WizardStep = "supplier" | "items" | "time";
+
+const TODAY = new Date().toISOString().slice(0, 10);
+
+/** Two letters, consistently — docs/BG-TERMINOLOGY.md style rule 7. "Чет"/"Пон"
+ *  were the odd three-letter pair out. */
+const WEEKDAY_LABELS: Record<Lang, string[]> = {
+  en: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+  bg: ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Нд"],
+};
+
+const WEEKDAY_FULL: Record<Lang, string[]> = {
+  en: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+  bg: ["понеделник", "вторник", "сряда", "четвъртък", "петък", "събота", "неделя"],
+};
+
+/** "Пн, Ср" reads as an unfinished list; Bulgarian wants the last item joined
+ *  with "и". English gets the same treatment for free. */
+function joinList(parts: string[], lang: Lang): string {
+  if (parts.length < 2) return parts.join("");
+  const last = parts[parts.length - 1];
+  return `${parts.slice(0, -1).join(", ")}${lang === "bg" ? " и " : " and "}${last}`;
+}
+
+function recurrenceLabel(r: Recurrence, lang: Lang): string {
+  if (r.type === "daily") return lang === "bg" ? "Всеки ден" : "Every day";
+  if (r.type === "interval") {
+    if (r.everyNDays === 1) return lang === "bg" ? "Всеки ден" : "Every day";
+    return lang === "bg" ? `На всеки ${r.everyNDays} дни` : `Every ${r.everyNDays} days`;
+  }
+  if (r.weekdays.length === 7) return lang === "bg" ? "Всеки ден" : "Every day";
+  return (lang === "bg" ? "Всеки " : "Every ") + joinList(r.weekdays.map((d) => WEEKDAY_FULL[lang][d - 1]), lang);
+}
+
+function lineSummary(lines: OrderRuleLine[], empty: string): string {
+  if (!lines.length) return empty;
+  const names = lines.slice(0, 3).map((l) => l.item.name).join(", ");
+  return lines.length > 3 ? `${names} +${lines.length - 3}` : names;
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+function parseTimeOfDay(value: string): { hour: number; minute: number } {
+  const [rawHour, rawMinute] = value.split(":");
+  const hour = Math.min(23, Math.max(0, Number(rawHour) || 0));
+  const minute = Math.round(Math.min(59, Math.max(0, Number(rawMinute) || 0)) / 5) * 5;
+  return { hour, minute: minute === 60 ? 55 : minute };
+}
+
+function timeOfDay(hour: number, minute: number): string {
+  return `${pad2((hour + 24) % 24)}:${pad2((minute + 60) % 60)}`;
+}
+
+function itemCountLabel(count: number, lang: Lang): string {
+  if (lang === "bg") return `${count} ${count === 1 ? "артикул" : "артикула"}`;
+  return `${count} ${count === 1 ? "item" : "items"}`;
+}
+
+function sameDays(a: number[], b: number[]): boolean {
+  return a.length === b.length && a.every((day, index) => day === b[index]);
+}
+
+function recurrenceSentence(mode: Mode, weekdays: number[], everyNDays: number, time: string, lang: Lang): string {
+  if (mode === "daily") return lang === "bg" ? `Всеки ден в ${time}` : `Every day at ${time}`;
+  if (mode === "interval") {
+    if (everyNDays <= 1) return lang === "bg" ? `Всеки ден в ${time}` : `Every day at ${time}`;
+    return lang === "bg" ? `На всеки ${everyNDays} дни в ${time}` : `Every ${everyNDays} days at ${time}`;
+  }
+
+  const sorted = [...weekdays].sort((a, b) => a - b);
+  if (sorted.length === 7) return lang === "bg" ? `Всеки ден в ${time}` : `Every day at ${time}`;
+  if (sameDays(sorted, [1, 2, 3, 4, 5])) {
+    return lang === "bg" ? `Всеки делничен ден в ${time}` : `Every weekday at ${time}`;
+  }
+  const days = joinList(sorted.map((day) => WEEKDAY_LABELS[lang][day - 1]), lang);
+  return lang === "bg" ? `Всеки ${days} в ${time}` : `Every ${days} at ${time}`;
 }
 
 const M = {
   en: {
-    title: "Supplier orders",
-    subtitle: "Prepare quantities, copy the supplier text, and track every recurring order",
-    today: "Today",
-    prev: "Previous week",
-    next: "Next week",
-    loading: "Preparing supplier orders…",
-    loadFailed: "Could not load supplier orders.",
-    emptyTitle: "No supplier orders this week",
-    emptyDesc: "Create an order plan and Poruchka will prepare each due supplier basket automatically.",
+    title: "Order plans",
+    subtitle: "Supplier reminders with item checklists",
+    newPlan: "New order plan",
+    // The same words as the Dashboard's empty-state button: one control, one name.
     createPlan: "Create order plan",
-    open: "Open",
-    sent: "Sent / confirmed",
-    deliveries: "Received",
-    due: "Due",
-    cutoff: "Cutoff",
-    expected: "Expected",
-    assigned: "Responsible",
-    item: "Item",
-    quantity: "Quantity",
-    basedOnLast: "Prefilled from the last order when available",
-    savedAt: (time: string) => `Saved at ${time}`,
-    copyOrder: "Copy supplier text",
-    copyTitle: "Supplier message",
-    copyDescription: "Copy this text and send it to the supplier in Viber or your usual channel.",
-    copyAction: "Copy text",
-    copied: "Supplier text copied",
-    copyFailed: "The supplier text could not be copied.",
-    // One word, and the same one the Telegram button uses ("✓ Sent",
-    // bot-copy.ts:39), so the phone and the web call this action by one name.
-    // The nuance the old "sent elsewhere" carried moved into markSentHint.
-    markSent: "Sent",
-    markSentHint: "Mark the order as sent once you have placed it with the supplier.",
-    snooze: "Remind in 1 hour",
-    snoozed: "Reminder snoozed for 1 hour. The recurring plan was not changed.",
-    skipToday: "Skip today",
-    skipWeek: "Skip this week",
-    skipOccurrence: "Skip this occurrence",
-    skipTitle: "Skip this order?",
-    skipDailyDescription: "Only today's order will be skipped. Tomorrow's daily plan remains active.",
-    skipWeeklyDescription: "Only this week's order will be skipped. The next scheduled week remains active.",
-    skipOccurrenceDescription: "Only this occurrence will be skipped. The recurring plan remains active.",
-    skipReason: "Reason (optional)",
-    skipAction: "Skip order",
-    supplierConfirmed: "Supplier confirmed",
-    receive: "Receive delivery",
-    saveFailed: "The order could not be updated.",
-    enterQuantity: "Enter at least one quantity.",
-    quantityAria: (name: string) => `Quantity for ${name}`,
-    confirmTitle: "Supplier confirmation",
-    reference: "Reference / confirmation number",
-    deliveryDate: "Expected delivery date",
-    confirmAction: "Save confirmation",
-    receiveTitle: (supplier: string) => `Receive delivery from ${supplier}`,
-    ordered: "Ordered",
-    received: "Received",
-    unitPrice: (currency: string) => `Unit price (${currency})`,
-    issue: "Issue",
-    noIssue: "No issue",
-    issueNote: "Issue note",
-    receivingNote: "Delivery note",
-    saveReceiving: "Save receiving",
-    // The caller passes an already absolute, already locale-formatted number —
-    // see PriceChange, which must not print "12.5" to a Bulgarian reader.
-    priceUp: (percent: string) => `Price up ${percent}% vs previous delivery`,
-    priceDown: (percent: string) => `Price down ${percent}% vs previous delivery`,
-    total: "Total",
-    // Keyed by the ReceivingException union: adding a fifth member to
-    // receivingExceptionSchema fails the build until it has a label here.
-    exception: {
-      SHORT: "Short quantity",
-      MISSING: "Missing",
-      DAMAGED: "Damaged",
-      SUBSTITUTED: "Substituted",
-    },
-    status: {
-      PENDING: "To prepare",
-      SUBMITTED: "Sent",
-      ESCALATED: "Overdue",
-      SKIPPED: "Skipped",
-      CONFIRMED: "Supplier confirmed",
-      PARTIALLY_RECEIVED: "Partly received",
-      RECEIVED: "Received",
-    },
+    addBasicsFirst: "Add a supplier, an item, and a team member first",
+    loadFailed: "Order plans could not be loaded. Please try again.",
+    saveFailed: "The change could not be saved. Please try again.",
+    loading: "Loading order plans…",
+    emptyTitle: "No order plans yet",
+    emptyDesc: "Add the items this supplier order should remind you to check.",
+    colSupplier: "Supplier",
+    colItems: "Items",
+    colRecurrence: "Recurrence",
+    colTime: "Time",
+    colResponsible: "Responsible",
+    colActive: "Active",
+    on: "On",
+    paused: "Paused",
+    pause: "Pause order plan",
+    activate: "Activate order plan",
+    edit: "Edit order plan",
+    testAria: "Send a test reminder to your Telegram",
+    testSent: "Test reminder sent.",
+    testFailedHint: "Test failed — is your Telegram linked?",
+    deleteAria: "Archive order plan",
+    archiveTitle: "Archive this order plan?",
+    archiveDesc: "Future reminders stop, but existing order history stays visible.",
+    archiveConfirm: "Archive plan",
+    dialogEditTitle: "Edit order plan",
+    dialogNewTitle: "New order plan",
+    saveChanges: "Save changes",
+    next: "Next",
+    back: "Back",
+    finish: "Done",
+    itemsStep: "Items",
+    timeStep: "Time",
+    wizardSupplierTitle: "Choose a supplier",
+    wizardSupplierHint: "Start with the supplier this reminder is for.",
+    wizardItemsTitle: "Choose items from",
+    wizardItemsHint: "Select the items this reminder should ask the team to check.",
+    wizardTimeTitle: "Choose reminder time",
+    wizardTimeHint: "Pick who receives it, how often it repeats, and the Telegram reminder time.",
+    stepSupplier: "Step 1 — Supplier",
+    stepItems: "Step 2 — Checklist from",
+    selectedChecklist: "selected — this is the reminder checklist",
+    noItemsForSupplier: "No items for this supplier yet.",
+    previewEmpty: "Select items to build the checklist…",
+    done: "Done",
+    usual: "usual",
+    dailyCaption: "Fires every single day.",
+    quickTimes: "Quick times",
+    increaseHour: "Increase hour",
+    decreaseHour: "Decrease hour",
+    increaseMinute: "Increase minute",
+    decreaseMinute: "Decrease minute",
+    supplier: "Supplier",
+    responsible: "Responsible",
+    backupPerson: "Backup person",
+    optional: "Optional",
+    selectPerson: "Select person…",
+    noBackupPerson: "No backup person",
+    recurrence: "Recurrence",
+    modeDaily: "Daily",
+    modeWeekly: "Weekly",
+    modeInterval: "Every N days",
+    every: "Every",
+    days: "days",
+    reminderTime: "Reminder time",
+    cutoffTime: "Cutoff time",
+    deliveryOffset: "Delivery offset days",
+    none: "None",
   },
   bg: {
-    title: "Поръчки към доставчици",
-    subtitle: "Подгответе количествата, копирайте текста и проследете всяка поръчка",
-    today: "Днес",
-    prev: "Предходна седмица",
-    next: "Следваща седмица",
-    loading: "Подготовка на поръчките…",
-    loadFailed: "Поръчките не можаха да бъдат заредени.",
-    emptyTitle: "Няма поръчки към доставчици тази седмица",
-    emptyDesc: "Създайте план и Poruchka автоматично ще подготвя всяка предстояща поръчка.",
+    title: "Планове за поръчки",
+    subtitle: "Напомняния към доставчици със списък за проверка",
+    // "план", never "график"/"разписание" — docs/BG-TERMINOLOGY.md.
+    newPlan: "Нов план",
     createPlan: "Създай план",
-    open: "Отворени",
-    sent: "Изпратени / потвърдени",
-    deliveries: "Приети",
-    // Not the bare preposition "За" — a preposition is not a label
-    // (docs/BG-TERMINOLOGY.md, style rule 6).
-    due: "Дата",
-    cutoff: "Краен час",
-    expected: "Очаквана доставка",
-    assigned: "Отговорник",
-    item: "Артикул",
-    quantity: "Количество",
-    basedOnLast: "Попълнено от последната поръчка, когато има такава",
-    savedAt: (time: string) => `Запазено в ${time}`,
-    copyOrder: "Копирай текст за доставчика",
-    copyTitle: "Съобщение към доставчика",
-    copyDescription: "Копирайте текста и го изпратете във Viber или по обичайния канал на доставчика.",
-    copyAction: "Копирай текста",
-    copied: "Текстът за доставчика е копиран",
-    copyFailed: "Текстът за доставчика не можа да бъде копиран.",
-    // Exactly the word on the Telegram button ("✓ Изпратена", bot-copy.ts:39) and
-    // in the status chip below, so one action has one name on the phone and here.
-    // "другаде" asked "къде другаде?" and answered nothing; the explanation now
-    // lives in markSentHint instead of on the button face.
-    markSent: "Изпратена",
-    markSentHint: "Отбележете поръчката като изпратена, ако вече сте я подали на доставчика.",
-    snooze: "Напомни след 1 час",
-    snoozed: "Напомнянето е отложено с 1 час. Повтарящият се план не е променен.",
-    skipToday: "Пропусни днес",
-    skipWeek: "Пропусни тази седмица",
-    skipOccurrence: "Пропусни тази поръчка",
-    skipTitle: "Да пропуснем ли тази поръчка?",
-    skipDailyDescription: "Пропуска се само днешната поръчка. Утрешният дневен план остава активен.",
-    skipWeeklyDescription: "Пропуска се само поръчката за тази седмица. Следващата остава активна.",
-    skipOccurrenceDescription: "Пропуска се само тази поръчка. Повтарящият се план остава активен.",
-    // „по избор“ is the canonical form — it is what COMMON.optional says.
-    skipReason: "Причина (по избор)",
-    skipAction: "Пропусни поръчката",
-    supplierConfirmed: "Доставчикът потвърди",
-    receive: "Приеми доставката",
-    saveFailed: "Поръчката не можа да бъде обновена.",
-    enterQuantity: "Въведете поне едно количество.",
-    quantityAria: (name: string) => `Количество за ${name}`,
-    confirmTitle: "Потвърждение от доставчика",
-    reference: "Номер / референция",
-    deliveryDate: "Очаквана дата за доставка",
-    confirmAction: "Запази потвърждението",
-    receiveTitle: (supplier: string) => `Приемане на доставка от ${supplier}`,
-    ordered: "Поръчано",
-    received: "Получено",
-    unitPrice: (currency: string) => `Единична цена (${currency})`,
-    issue: "Проблем",
-    noIssue: "Без проблем",
-    issueNote: "Бележка за проблема",
-    receivingNote: "Бележка за доставката",
-    saveReceiving: "Запази приемането",
-    // "нагоре/надолу с X%" is a calque of "price up X%". Kitchen staff say
-    // по-скъпо / по-евтино, and it is shorter for the 11.5px badge.
-    priceUp: (percent: string) => `С ${percent}% по-скъпо от предходната доставка`,
-    priceDown: (percent: string) => `С ${percent}% по-евтино от предходната доставка`,
-    total: "Обща сума",
-    exception: {
-      SHORT: "По-малко количество",
-      MISSING: "Липсва",
-      DAMAGED: "Повредено",
-      // "Заменено" is what a supplier swapping in another product does;
-      // "Заместено" reads as standing in for someone.
-      SUBSTITUTED: "Заменено",
-    },
-    status: {
-      PENDING: "За подготовка",
-      SUBMITTED: "Изпратена",
-      // docs/BG-TERMINOLOGY.md retires the escalation jargon: the status word is
-      // „Просрочена“, and it must match the dashboard calendar chip.
-      ESCALATED: "Просрочена",
-      SKIPPED: "Пропусната",
-      CONFIRMED: "Потвърдена",
-      PARTIALLY_RECEIVED: "Частично приета",
-      RECEIVED: "Приета",
-    },
+    addBasicsFirst: "Първо добавете доставчик, артикул и човек от екипа",
+    loadFailed: "Плановете не се заредиха. Опитайте отново.",
+    saveFailed: "Промяната не бе запазена. Опитайте отново.",
+    loading: "Зареждане на плановете…",
+    emptyTitle: "Все още няма планове",
+    emptyDesc: "Добавете артикулите, за които тази поръчка към доставчик трябва да ви подсеща.",
+    colSupplier: "Доставчик",
+    colItems: "Артикули",
+    colRecurrence: "Повторение",
+    colTime: "Час",
+    colResponsible: "Отговорник",
+    colActive: "Активен",
+    on: "Включен",
+    paused: "На пауза",
+    pause: "Постави плана на пауза",
+    activate: "Активирай плана",
+    edit: "Редактирай плана",
+    testAria: "Изпрати тестово напомняне към вашия Telegram",
+    testSent: "Тестовото напомняне е изпратено.",
+    testFailedHint: "Тестът не успя — свързан ли е вашият Telegram?",
+    deleteAria: "Архивирай плана",
+    archiveTitle: "Да архивираме ли този план?",
+    archiveDesc: "Бъдещите напомняния спират, но историята на поръчките остава видима.",
+    archiveConfirm: "Архивирай",
+    dialogEditTitle: "Редактиране на план",
+    dialogNewTitle: "Нов план",
+    saveChanges: "Запази",
+    next: "Напред",
+    back: "Назад",
+    finish: "Готово",
+    itemsStep: "Артикули",
+    timeStep: "Час",
+    wizardSupplierTitle: "Изберете доставчик",
+    wizardSupplierHint: "Започнете с доставчика, за когото е напомнянето.",
+    wizardItemsTitle: "Изберете артикули от",
+    wizardItemsHint: "Изберете артикулите, които екипът да проверява преди поръчката.",
+    wizardTimeTitle: "Изберете час",
+    wizardTimeHint: "Изберете кой получава напомнянето, колко често се повтаря и в колко часа.",
+    stepSupplier: "Стъпка 1 — Доставчик",
+    stepItems: "Стъпка 2 — Списък от",
+    selectedChecklist: "избрани — това е списъкът в напомнянето",
+    noItemsForSupplier: "Няма артикули към този доставчик.",
+    previewEmpty: "Изберете артикули, за да се изгради списъкът…",
+    done: "Готово",
+    usual: "обичайно",
+    dailyCaption: "Ще подсеща всеки ден.",
+    quickTimes: "Бързи часове",
+    increaseHour: "Увеличи часа",
+    decreaseHour: "Намали часа",
+    increaseMinute: "Увеличи минутите",
+    decreaseMinute: "Намали минутите",
+    supplier: "Доставчик",
+    responsible: "Отговорник",
+    // The отговорник is the one already being nudged; the резервен човек is who
+    // hears about it when there is no reaction. No escalation jargon on screen.
+    backupPerson: "Резервен човек",
+    optional: "По избор",
+    selectPerson: "Изберете човек…",
+    noBackupPerson: "Без резервен човек",
+    recurrence: "Повторение",
+    modeDaily: "Ежедневно",
+    modeWeekly: "Седмично",
+    modeInterval: "На всеки N дни",
+    every: "На всеки",
+    days: "дни",
+    reminderTime: "Час за напомняне",
+    cutoffTime: "Краен час",
+    deliveryOffset: "Дни до доставка",
+    none: "Няма",
   },
 } as const;
 
-function startOfWeek(date: Date): Date {
-  const result = new Date(date);
-  const mondayOffset = (result.getDay() + 6) % 7;
-  result.setHours(12, 0, 0, 0);
-  result.setDate(result.getDate() - mondayOffset);
-  return result;
-}
-
-function addDays(date: Date, days: number): Date {
-  const result = new Date(date);
-  result.setDate(result.getDate() + days);
-  return result;
-}
-
-function toISODate(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function dateOnly(value: string): Date {
-  return new Date(`${value.slice(0, 10)}T12:00:00`);
-}
-
-function formatDate(value: string, lang: Lang): string {
-  return dateOnly(value).toLocaleDateString(lang === "bg" ? "bg-BG" : "en-GB", {
-    day: "numeric",
-    month: "short",
-    weekday: "short",
-  });
-}
-
-function formatTime(value: Date, lang: Lang): string {
-  return value.toLocaleTimeString(lang === "bg" ? "bg-BG" : "en-GB", { hour: "2-digit", minute: "2-digit" });
-}
-
-/**
- * Bulgaria has been on the euro since 2026-01-01, so every price on this page is
- * in it. One constant, so a per-tenant currency setting replaces a single line —
- * and so no bare number with an English decimal point ever reaches a Bulgarian
- * reader (docs/BG-TERMINOLOGY.md, style rule 9).
- */
-const CURRENCY = "EUR";
-
-function formatMoney(value: number, lang: Lang): string {
-  return value.toLocaleString(lang === "bg" ? "bg-BG" : "en-GB", {
-    style: "currency",
-    currency: CURRENCY,
-    minimumFractionDigits: 2,
-  });
-}
-
-/** The symbol on its own, for input labels ("Единична цена (€)"). Derived from
- *  CURRENCY rather than written out, so the two can never drift apart. */
-function currencySymbol(lang: Lang): string {
-  return (
-    new Intl.NumberFormat(lang === "bg" ? "bg-BG" : "en-GB", { style: "currency", currency: CURRENCY })
-      .formatToParts(0)
-      .find((part) => part.type === "currency")?.value ?? CURRENCY
-  );
-}
-
-function statusTone(status: OrderRunStatus): "neutral" | "accent" | "confirmed" | "pending" | "escalated" {
-  if (status === "ESCALATED") return "escalated";
-  if (status === "PENDING" || status === "PARTIALLY_RECEIVED") return "pending";
-  if (status === "SUBMITTED") return "accent";
-  if (status === "CONFIRMED" || status === "RECEIVED") return "confirmed";
-  return "neutral";
-}
-
 export default function OrdersPage() {
-  const router = useRouter();
   const t = useTr(M);
+  const c = useCommon();
   const lang = useLang();
-  const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
-  // Deep link from the dashboard calendar: /orders?run=<id>&week=<Monday, ISO>.
-  // Which order to scroll to once the week it belongs to has loaded.
-  const [targetRunId, setTargetRunId] = useState<string | null>(null);
-  const [runs, setRuns] = useState<OrderRun[]>([]);
-  // Which week the cards on screen belong to, rather than a plain `loading` flag:
-  // a refetch of the SAME week must leave the cards mounted, or every quantity
-  // typed into them is lost with the unmount. Only moving to another week (or the
-  // very first load) may replace them with the placeholder.
-  const [loadedWeek, setLoadedWeek] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const weekEnd = useMemo(() => addDays(weekStart, 6), [weekStart]);
-  const weekKey = toISODate(weekStart);
+  const errText = useApiError();
+  const [rules, setRules] = useState<OrderRule[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [items, setItems] = useState<Item[]>([]);
+  const [team, setTeam] = useState<TeamMember[]>([]);
+  const [loading, setLoading] = useState(true);
+  // The cause is kept, not the finished sentence: the banner is translated at
+  // render time, so flipping the language switch does not leave it in the old one.
+  const [problem, setProblem] = useState<{ cause: unknown; kind: "load" | "save" } | null>(null);
+  const [editing, setEditing] = useState<OrderRule | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [archiving, setArchiving] = useState<OrderRule | null>(null);
+  const [testState, setTestState] = useState<{ id: string; ok: boolean } | null>(null);
 
-  // Localized copy is read through refs. If `t` or `lang` were in `load`'s dep
-  // array, flipping the BG/EN switch would give `load` a new identity, refire the
-  // effect, refetch the week and wipe every unsaved quantity on the page.
-  const tRef = useRef(t);
-  const langRef = useRef(lang);
-  tRef.current = t;
-  langRef.current = lang;
-  // Guards against out-of-order responses when the week arrows are clicked twice.
-  const requestId = useRef(0);
+  const refetch = useCallback(async () => {
+    setRules(await api<OrderRule[]>("/order-rules"));
+  }, []);
 
+  // No translated string in the dep list: it used to depend on t.loadFailed, so
+  // switching BG/EN refetched everything and closed nothing gracefully.
   const load = useCallback(async () => {
-    const id = ++requestId.current;
-    const requestedWeek = toISODate(weekStart);
-    setError(null);
+    setLoading(true);
+    setProblem(null);
     try {
-      const data = await api<OrderRun[]>(`/order-runs?from=${requestedWeek}&to=${toISODate(weekEnd)}`);
-      if (requestId.current !== id) return;
-      setRuns(data);
+      const [ruleList, supplierList, itemList, teamList] = await Promise.all([
+        api<OrderRule[]>("/order-rules"),
+        api<Supplier[]>("/suppliers"),
+        api<Item[]>("/items"),
+        api<TeamMember[]>("/team"),
+      ]);
+      setRules(ruleList);
+      setSuppliers(supplierList);
+      setItems(itemList);
+      setTeam(teamList);
     } catch (cause) {
-      if (requestId.current !== id) return;
-      // Drop the previous week's cards: leaving them under the new week's header
-      // would show the wrong orders for the dates in the title.
-      setRuns([]);
-      setError(apiErrorText(cause, langRef.current, tRef.current.loadFailed));
+      console.error(cause);
+      setProblem({ cause, kind: "load" });
     } finally {
-      if (requestId.current === id) setLoadedWeek(requestedWeek);
+      setLoading(false);
     }
-  }, [weekEnd, weekStart]);
+  }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  // Read the deep-link params on mount rather than in the useState initializer:
-  // this page is prerendered, so touching window during the first render would
-  // make the server HTML and the first client render disagree. One extra fetch
-  // when the link points at another week is the price of that safety.
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const week = params.get("week");
-    if (week && /^\d{4}-\d{2}-\d{2}$/.test(week)) {
-      const target = startOfWeek(dateOnly(week));
-      setWeekStart((current) => (toISODate(current) === toISODate(target) ? current : target));
+  const missingBasics = suppliers.length === 0 || items.length === 0 || team.length === 0;
+  const problemText = problem ? errText(problem.cause, problem.kind === "load" ? t.loadFailed : t.saveFailed) : null;
+
+  async function sendTestReminder(rule: OrderRule) {
+    setTestState(null);
+    try {
+      await api(`/order-rules/${rule.id}/test-reminder`, { method: "POST" });
+      setTestState({ id: rule.id, ok: true });
+    } catch (cause) {
+      console.error(cause);
+      setTestState({ id: rule.id, ok: false });
     }
-    const run = params.get("run");
-    if (run) setTargetRunId(run);
-  }, []);
+    window.setTimeout(() => setTestState(null), 2600);
+  }
 
-  // Scroll only after the week has actually loaded — on mount the card does not
-  // exist yet. Cleared either way so a later refetch does not yank the page.
-  useEffect(() => {
-    if (!targetRunId || loadedWeek !== weekKey) return;
-    document.getElementById(`run-${targetRunId}`)?.scrollIntoView({ block: "start", behavior: "smooth" });
-    setTargetRunId(null);
-  }, [targetRunId, loadedWeek, weekKey]);
+  async function toggleActive(rule: OrderRule) {
+    setProblem(null);
+    try {
+      await api(`/order-rules/${rule.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ active: !rule.active }),
+      });
+      await refetch();
+    } catch (cause) {
+      console.error(cause);
+      setProblem({ cause, kind: "save" });
+    }
+  }
 
-  const counts = {
-    open: runs.filter((run) => run.status === "PENDING" || run.status === "ESCALATED").length,
-    sent: runs.filter((run) => ["SUBMITTED", "CONFIRMED", "PARTIALLY_RECEIVED"].includes(run.status)).length,
-    received: runs.filter((run) => run.status === "RECEIVED").length,
-  };
-  const rangeLabel = `${weekStart.toLocaleDateString(lang === "bg" ? "bg-BG" : "en-GB", { day: "numeric", month: "short" })} – ${weekEnd.toLocaleDateString(lang === "bg" ? "bg-BG" : "en-GB", { day: "numeric", month: "short" })}`;
+  async function confirmArchive() {
+    if (!archiving) return;
+    setProblem(null);
+    try {
+      await api(`/order-rules/${archiving.id}`, { method: "DELETE" });
+      setArchiving(null);
+      await refetch();
+    } catch (cause) {
+      console.error(cause);
+      setProblem({ cause, kind: "save" });
+    }
+  }
 
   return (
     <div style={{ padding: "32px 36px", maxWidth: 1120, margin: "0 auto" }}>
       <PageHead
         title={t.title}
-        subtitle={`${t.subtitle} · ${rangeLabel}`}
+        subtitle={t.subtitle}
         action={
-          <div style={{ display: "flex", gap: 8 }}>
-            <Button variant="secondary" icon={<ChevronLeft size={16} />} aria-label={t.prev} onClick={() => setWeekStart((current) => addDays(current, -7))} />
-            <Button variant="secondary" onClick={() => setWeekStart(startOfWeek(new Date()))}>{t.today}</Button>
-            <Button variant="secondary" icon={<ChevronRight size={16} />} aria-label={t.next} onClick={() => setWeekStart((current) => addDays(current, 7))} />
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+            <Button
+              icon={<Plus size={16} aria-hidden="true" />}
+              disabled={missingBasics}
+              onClick={() => {
+                setEditing(null);
+                setCreating(true);
+              }}
+            >
+              {t.newPlan}
+            </Button>
+            {missingBasics ? <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{t.addBasicsFirst}</span> : null}
           </div>
         }
       />
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 22 }}>
-        <Summary label={t.open} value={counts.open} tone="pending" />
-        <Summary label={t.sent} value={counts.sent} tone="accent" />
-        <Summary label={t.deliveries} value={counts.received} tone="confirmed" />
+      {/* Both regions stay mounted and only their contents change: a live region
+          inserted together with its text is frequently never announced. */}
+      <div role="alert" aria-atomic="true">
+        {problemText ? (
+          <div style={{ color: "var(--red-600)", fontSize: 14, marginBottom: 16 }}>{problemText}</div>
+        ) : null}
+      </div>
+      <div role="status" aria-live="polite" aria-atomic="true">
+        {testState ? (
+          <div
+            style={{
+              marginBottom: 16,
+              fontSize: 13,
+              color: testState.ok ? "var(--status-confirmed-fg)" : "var(--red-600)",
+            }}
+          >
+            {testState.ok ? t.testSent : t.testFailedHint}
+          </div>
+        ) : null}
       </div>
 
-      {error ? <ErrorBanner message={error} /> : null}
-      {loadedWeek !== weekKey ? (
-        <div role="status" style={{ padding: 48, textAlign: "center", color: "var(--text-muted)" }}>{t.loading}</div>
-      ) : runs.length === 0 ? (
-        // After a failed load "no orders this week" would be a lie — the banner
-        // above already says what happened.
-        error ? null : (
+      {loading ? (
+        <div role="status" style={{ padding: "48px 24px", textAlign: "center", color: "var(--text-muted)", fontSize: 14 }}>
+          {t.loading}
+        </div>
+      ) : rules.length === 0 ? (
+        // After a failed load "no plans yet" would be a lie — the banner above
+        // already says what happened.
+        problemText ? null : (
           <EmptyState
-            icon={<ClipboardList size={22} />}
+            icon={<Repeat size={22} aria-hidden="true" />}
             title={t.emptyTitle}
             description={t.emptyDesc}
-            action={<Button onClick={() => router.push("/schedules")}>{t.createPlan}</Button>}
+            action={
+              <Button
+                icon={<Plus size={16} aria-hidden="true" />}
+                disabled={missingBasics}
+                onClick={() => {
+                  setEditing(null);
+                  setCreating(true);
+                }}
+              >
+                {t.createPlan}
+              </Button>
+            }
           />
         )
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {runs.map((run) => <OrderCard key={run.id} run={run} lang={lang} onChanged={load} />)}
-        </div>
+        <Table<OrderRule>
+          columns={[
+            { key: "supplier", label: t.colSupplier },
+            { key: "items", label: t.colItems },
+            { key: "recurrence", label: t.colRecurrence },
+            { key: "time", label: t.colTime, width: 110 },
+            { key: "assignee", label: t.colResponsible },
+            { key: "active", label: t.colActive, align: "center", width: 90 },
+            { key: "actions", label: "", align: "right", width: 122 },
+          ]}
+          rows={rules}
+          rowKey={(r) => r.id}
+          renderCell={(r, key) => {
+            if (key === "supplier") return <span style={{ fontWeight: 600, color: "var(--text-strong)" }}>{r.supplier.name}</span>;
+            if (key === "items")
+              return (
+                <span>
+                  <span style={{ display: "block", color: "var(--text-body)" }}>{lineSummary(r.lines, t.none)}</span>
+                  <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{itemCountLabel(r.lines.length, lang)}</span>
+                </span>
+              );
+            if (key === "recurrence") return <Badge tone="accent">{recurrenceLabel(r.recurrence, lang)}</Badge>;
+            if (key === "time")
+              return (
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--text-body)" }}>
+                  {r.reminderTimeOfDay}
+                  {r.cutoffTime ? <span style={{ color: "var(--text-muted)" }}> / {r.cutoffTime}</span> : null}
+                </span>
+              );
+            if (key === "assignee") return <span style={{ color: "var(--text-body)" }}>{r.assignedUser.name}</span>;
+            if (key === "active")
+              return (
+                <button
+                  type="button"
+                  onClick={() => void toggleActive(r)}
+                  style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
+                  aria-label={r.active ? t.pause : t.activate}
+                  aria-pressed={r.active}
+                >
+                  {r.active ? <Badge tone="confirmed" dot>{t.on}</Badge> : <Badge tone="neutral">{t.paused}</Badge>}
+                </button>
+              );
+            return (
+              <div style={{ display: "inline-flex", gap: 4, justifyContent: "flex-end" }}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={
+                    testState?.id === r.id ? (
+                      testState.ok ? (
+                        <Check size={15} color="var(--status-confirmed-dot)" aria-hidden="true" />
+                      ) : (
+                        <Send size={15} color="var(--red-500)" aria-hidden="true" />
+                      )
+                    ) : (
+                      <Send size={15} aria-hidden="true" />
+                    )
+                  }
+                  aria-label={t.testAria}
+                  title={testState?.id === r.id && !testState.ok ? t.testFailedHint : t.testAria}
+                  onClick={() => void sendTestReminder(r)}
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<Pencil size={15} aria-hidden="true" />}
+                  aria-label={t.edit}
+                  onClick={() => {
+                    setCreating(false);
+                    setEditing(r);
+                  }}
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<Trash2 size={15} color="var(--red-500)" aria-hidden="true" />}
+                  aria-label={t.deleteAria}
+                  onClick={() => setArchiving(r)}
+                />
+              </div>
+            );
+          }}
+        />
       )}
-    </div>
-  );
-}
 
-function OrderCard({ run, lang, onChanged }: { run: OrderRun; lang: Lang; onChanged: () => Promise<void> }) {
-  const t = useTr(M);
-  const errText = useApiError();
-  const [quantities, setQuantities] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState(false);
-  const [receiving, setReceiving] = useState(false);
-  const [supplierMessage, setSupplierMessage] = useState<string | null>(null);
-  const [skipping, setSkipping] = useState(false);
-  const [savedAt, setSavedAt] = useState<Date | null>(null);
-
-  // Only a keystroke marks the draft dirty, so neither the reset effect below nor
-  // a background refetch can trigger a save the user never asked for.
-  const dirty = useRef(false);
-  const quantitiesRef = useRef(quantities);
-  quantitiesRef.current = quantities;
-
-  // Deliberately keyed on run.id/run.status, NOT on `run`: a refetch caused by
-  // another card (or by an edit made in Telegram) must not overwrite the numbers
-  // someone is typing right now. The person in front of the screen wins until the
-  // order itself moves on.
-  useEffect(() => {
-    setQuantities(Object.fromEntries(run.lines.map((line) => [line.id, line.quantitySnapshot === null ? "" : String(line.quantitySnapshot)])));
-    dirty.current = false;
-    // Reacting to `run.lines` would overwrite what someone is typing on every
-    // background refetch, so the narrow dep list above is the whole point.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run.id, run.status]);
-
-  const editable = run.status === "PENDING" || run.status === "ESCALATED";
-  const skipLabel =
-    run.orderRule.recurrence.type === "daily"
-      ? t.skipToday
-      : run.orderRule.recurrence.type === "weekly"
-        ? t.skipWeek
-        : t.skipOccurrence;
-
-  const saveDraft = useCallback(async () => {
-    await api(`/order-runs/${run.id}/draft`, {
-      method: "PATCH",
-      body: JSON.stringify({
-        lines: run.lines.map((line) => {
-          const value = quantitiesRef.current[line.id];
-          return { lineId: line.id, quantity: value === undefined || value === "" ? null : Number(value) };
-        }),
-      }),
-    });
-  }, [run.id, run.lines]);
-
-  const autosave = useCallback(async () => {
-    if (!dirty.current) return;
-    dirty.current = false;
-    try {
-      await saveDraft();
-      setSavedAt(new Date());
-    } catch {
-      // Stay dirty so the next keystroke, the next blur or the copy/submit path
-      // retries — those two save again and DO surface the error. A banner thrown
-      // up while someone is still typing would be noise.
-      dirty.current = true;
-    }
-  }, [saveDraft]);
-
-  // Debounced draft autosave, replacing the old "Запази количествата" button.
-  // It must never set `busy`: that disables the whole action row, so the buttons
-  // would flicker dead every time a digit is typed.
-  useEffect(() => {
-    if (!editable || !dirty.current) return;
-    const timer = setTimeout(() => void autosave(), 800);
-    return () => clearTimeout(timer);
-  }, [quantities, editable, autosave]);
-
-  const submit = async () => {
-    if (!Object.values(quantities).some((value) => Number(value) > 0)) {
-      setError(t.enterQuantity);
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
-      await saveDraft();
-      dirty.current = false;
-      await api(`/order-runs/${run.id}/submit`, { method: "POST" });
-      await onChanged();
-    } catch (cause) {
-      setError(errText(cause, t.saveFailed));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const prepareSupplierMessage = async () => {
-    if (!Object.values(quantities).some((value) => Number(value) > 0)) {
-      setError(t.enterQuantity);
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
-      await saveDraft();
-      dirty.current = false;
-      const result = await api<{ text: string }>(`/order-runs/${run.id}/supplier-message`);
-      setSupplierMessage(result.text);
-    } catch (cause) {
-      setError(errText(cause, t.copyFailed));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const snooze = async () => {
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
-      await api(`/order-runs/${run.id}/snooze`, {
-        method: "POST",
-        body: JSON.stringify({ minutes: 60 }),
-      });
-      setNotice(t.snoozed);
-    } catch (cause) {
-      setError(errText(cause, t.saveFailed));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const copied = () => {
-    setSupplierMessage(null);
-    setNotice(t.copied);
-  };
-
-  const total = run.lines.reduce((sum, line) => {
-    const quantity = Number(line.receivedQuantity ?? 0);
-    const price = Number(line.unitPrice ?? 0);
-    return sum + quantity * price;
-  }, 0);
-
-  return (
-    // The id is the scroll target for a dashboard chip; the margin keeps the card
-    // header clear of the sticky app bar once it lands.
-    <Card id={`run-${run.id}`} pad="none" style={{ overflow: "hidden", scrollMarginTop: 72 }}>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, padding: "18px 20px", borderBottom: "1px solid var(--border-subtle)", flexWrap: "wrap" }}>
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
-            <h2 style={{ fontSize: 19 }}>{run.supplier.name}</h2>
-            <Badge tone={statusTone(run.status)} dot>{t.status[run.status]}</Badge>
-          </div>
-          <div style={{ display: "flex", gap: 14, marginTop: 7, color: "var(--text-muted)", fontSize: 12.5, flexWrap: "wrap" }}>
-            <span>{t.due}: <strong style={{ color: "var(--text-body)" }}>{formatDate(run.dueDate, lang)}</strong></span>
-            {run.orderRule.cutoffTime ? <span>{t.cutoff}: {run.orderRule.cutoffTime}</span> : null}
-            {run.expectedDeliveryDate ? <span>{t.expected}: {formatDate(run.expectedDeliveryDate, lang)}</span> : null}
-            <span>{t.assigned}: {run.assignedUser.name}</span>
-          </div>
-        </div>
-        <OrderActions
-          run={run}
-          busy={busy}
-          onCopy={() => void prepareSupplierMessage()}
-          onSubmit={() => void submit()}
-          onConfirm={() => setConfirming(true)}
-          onReceive={() => setReceiving(true)}
-        />
-      </div>
-
-      {error || notice ? (
-        <div role={error ? "alert" : "status"} style={{ padding: "10px 20px", fontSize: 13, color: error ? "var(--status-escalated-fg)" : "var(--status-confirmed-fg)", background: error ? "var(--status-escalated-bg)" : "var(--status-confirmed-bg)" }}>
-          {error ?? notice}
-        </div>
-      ) : null}
-
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 620 }}>
-          <thead>
-            <tr style={{ background: "var(--surface-sunken)", color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              <th scope="col" style={thStyle}>{t.item}</th>
-              <th scope="col" style={{ ...thStyle, width: 180 }}>{t.quantity}</th>
-              <th scope="col" style={thStyle}>{run.status === "RECEIVED" || run.status === "PARTIALLY_RECEIVED" ? t.received : ""}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {run.lines.map((line, index) => (
-              <tr key={line.id} style={{ borderTop: index ? "1px solid var(--border-subtle)" : "none" }}>
-                {/* A row header, so a screen reader announces the item name with
-                    every cell in the row. The resets are needed because <th>
-                    defaults to bold and centred and tdStyle sets neither. */}
-                <th scope="row" style={{ ...tdStyle, textAlign: "left", fontWeight: 400 }}>
-                  <strong style={{ color: "var(--text-strong)" }}>{line.itemNameSnapshot}</strong>
-                  {line.notesSnapshot ? <div style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 2 }}>{line.notesSnapshot}</div> : null}
-                </th>
-                <td style={tdStyle}>
-                  {editable ? (
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <Input
-                        type="number"
-                        min={0}
-                        step="any"
-                        aria-label={t.quantityAria(line.itemNameSnapshot)}
-                        value={quantities[line.id] ?? ""}
-                        onChange={(event) => {
-                          dirty.current = true;
-                          setQuantities((current) => ({ ...current, [line.id]: event.target.value }));
-                        }}
-                        onBlur={() => void autosave()}
-                        style={{ width: 110 }}
-                      />
-                      <span style={{ fontSize: 13, color: "var(--text-muted)" }}>{line.unitSnapshot}</span>
-                    </div>
-                  ) : (
-                    <span>{String(line.quantitySnapshot ?? "—")} {line.unitSnapshot}</span>
-                  )}
-                </td>
-                <td style={tdStyle}>
-                  {/* The exception is NOT nested under receivedQuantity: clearing
-                      the quantity is exactly how "Липсва" gets recorded, and that
-                      used to hide both the problem and its note. */}
-                  {line.receivedQuantity !== null ? (
-                    <div>{String(line.receivedQuantity)} {line.unitSnapshot}{line.unitPrice !== null ? ` × ${formatMoney(Number(line.unitPrice), lang)}` : ""}</div>
-                  ) : null}
-                  {line.exceptionType ? (
-                    <div style={{ color: "var(--status-escalated-fg)", fontSize: 12, marginTop: 3 }}>
-                      {t.exception[line.exceptionType]}{line.exceptionNote ? ` · ${line.exceptionNote}` : ""}
-                    </div>
-                  ) : null}
-                  {line.receivedQuantity !== null && line.priceChangePercent !== null && Math.abs(line.priceChangePercent) >= 5 ? (
-                    <PriceChange value={line.priceChangePercent} />
-                  ) : null}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* The quiet line: the prefill hint and the autosave marker on the left,
-          the two rarely-used actions on the right. Keeping "Напомни след 1 час"
-          and "Пропусни…" out of the header is what lets the header hold a single
-          primary action instead of a five-button wall. */}
-      {editable ? (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", padding: "8px 14px 12px 20px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", color: "var(--text-muted)", fontSize: 12 }}>
-            <span>{t.basedOnLast}</span>
-            <span role="status" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "var(--status-confirmed-fg)" }}>
-              {savedAt ? (
-                <>
-                  <Check size={13} />
-                  {t.savedAt(formatTime(savedAt, lang))}
-                </>
-              ) : null}
-            </span>
-          </div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <Button size="sm" variant="ghost" icon={<Clock3 size={15} />} disabled={busy} onClick={() => void snooze()}>{t.snooze}</Button>
-            <Button size="sm" variant="ghost" icon={<SkipForward size={15} />} disabled={busy} onClick={() => setSkipping(true)}>{skipLabel}</Button>
-          </div>
-        </div>
-      ) : null}
-      {run.status === "RECEIVED" && total > 0 ? (
-        <div style={{ display: "flex", justifyContent: "flex-end", padding: "12px 20px", borderTop: "1px solid var(--border-subtle)", fontSize: 13 }}>
-          {t.total}: <strong style={{ marginLeft: 8, fontFamily: "var(--font-mono)" }}>{formatMoney(total, lang)}</strong>
-        </div>
-      ) : null}
-
-      {confirming ? <SupplierConfirmDialog run={run} onClose={() => setConfirming(false)} onSaved={onChanged} /> : null}
-      {receiving ? <ReceiveDialog run={run} onClose={() => setReceiving(false)} onSaved={onChanged} /> : null}
-      {supplierMessage ? (
-        <SupplierMessageDialog
-          text={supplierMessage}
-          onClose={() => setSupplierMessage(null)}
-          onCopied={copied}
-        />
-      ) : null}
-      {skipping ? (
-        <SkipOrderDialog
-          run={run}
-          onClose={() => setSkipping(false)}
-          onSkipped={async () => {
-            setSkipping(false);
-            await onChanged();
+      {creating || editing ? (
+        <OrderPlanDialog
+          rule={editing}
+          suppliers={suppliers}
+          items={items}
+          team={team}
+          onClose={() => {
+            setCreating(false);
+            setEditing(null);
+          }}
+          onSaved={async () => {
+            await refetch();
+            setCreating(false);
+            setEditing(null);
           }}
         />
       ) : null}
-    </Card>
+
+      {archiving ? (
+        <Dialog
+          tone="danger"
+          title={t.archiveTitle}
+          description={`${archiving.supplier.name} — ${lineSummary(archiving.lines, t.none)}. ${t.archiveDesc}`}
+          confirmLabel={t.archiveConfirm}
+          cancelLabel={c.cancel}
+          onCancel={() => setArchiving(null)}
+          onConfirm={() => void confirmArchive()}
+        />
+      ) : null}
+    </div>
   );
 }
 
-/**
- * The card header carries the one action the user came to do, plus the one that
- * closes the order. Saving is automatic now (see OrderCard.autosave), and snooze
- * and skip live on the quiet line under the table.
- */
-function OrderActions({
-  run,
-  busy,
-  onCopy,
-  onSubmit,
-  onConfirm,
-  onReceive,
+function OrderPlanDialog({
+  rule,
+  suppliers,
+  items,
+  team,
+  onClose,
+  onSaved,
 }: {
-  run: OrderRun;
-  busy: boolean;
-  onCopy: () => void;
-  onSubmit: () => void;
-  onConfirm: () => void;
-  onReceive: () => void;
+  rule: OrderRule | null;
+  suppliers: Supplier[];
+  items: Item[];
+  team: TeamMember[];
+  onClose: () => void;
+  onSaved: () => Promise<void> | void;
 }) {
   const t = useTr(M);
-  if (run.status === "PENDING" || run.status === "ESCALATED") {
-    return (
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-        <Button icon={<ClipboardCopy size={16} />} disabled={busy} onClick={onCopy}>{t.copyOrder}</Button>
-        <Button variant="secondary" icon={<Check size={16} />} disabled={busy} title={t.markSentHint} onClick={onSubmit}>{t.markSent}</Button>
-      </div>
+  const c = useCommon();
+  const lang = useLang();
+  const errText = useApiError();
+  const assigneeId = useId();
+  const initialMode: Mode = rule ? rule.recurrence.type : "weekly";
+  const steps: WizardStep[] = ["supplier", "items", "time"];
+  const [step, setStep] = useState<WizardStep>("supplier");
+  const [supplierId, setSupplierId] = useState(rule?.supplierId ?? suppliers[0]?.id ?? "");
+  const [assignedUserId, setAssignedUserId] = useState(rule?.assignedUserId ?? team[0]?.id ?? "");
+  const [mode, setMode] = useState<Mode>(initialMode);
+  const [weekdays, setWeekdays] = useState<number[]>(
+    rule && rule.recurrence.type === "weekly" ? rule.recurrence.weekdays : [3],
+  );
+  const [everyNDays, setEveryNDays] = useState(
+    rule && rule.recurrence.type === "interval" ? rule.recurrence.everyNDays : 14,
+  );
+  const [time, setTime] = useState(rule?.reminderTimeOfDay ?? "09:00");
+  const [lines, setLines] = useState<DraftLine[]>(
+    rule?.lines.map((l) => ({
+      itemId: l.itemId,
+      defaultQuantity: l.defaultQuantity != null ? String(l.defaultQuantity) : "",
+      unit: l.unit ?? l.item.unit ?? "",
+      notes: l.notes ?? "",
+    })) ?? [],
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const supplierItems = useMemo(() => items.filter((i) => i.supplierId === supplierId), [items, supplierId]);
+  const selectedSupplier = suppliers.find((supplier) => supplier.id === supplierId) ?? suppliers[0] ?? null;
+  const lineByItemId = useMemo(() => new Map(lines.map((line) => [line.itemId, line])), [lines]);
+  const selectedItems = supplierItems.filter((item) => lineByItemId.has(item.id));
+  const previewLines = selectedItems.map((item) => {
+    const line = lineByItemId.get(item.id);
+    return {
+      id: item.id,
+      name: item.name,
+      quantity: line?.defaultQuantity ?? "",
+      unit: line?.unit || item.unit || "",
+    };
+  });
+  const { hour, minute } = parseTimeOfDay(time);
+  const quickTimes = ["07:00", "09:00", "14:00", "18:00"];
+  const stepIndex = steps.indexOf(step);
+  const isFinalStep = step === "time";
+
+  function updateSupplier(nextSupplierId: string) {
+    setSupplierId(nextSupplierId);
+    setLines([]);
+    setStep("items");
+  }
+
+  function toggleItem(item: Item) {
+    setLines((current) => {
+      if (current.some((line) => line.itemId === item.id)) {
+        return current.filter((line) => line.itemId !== item.id);
+      }
+      return [...current, { itemId: item.id, defaultQuantity: "", unit: item.unit ?? "", notes: item.notes ?? "" }];
+    });
+  }
+
+  function toggleDay(day: number) {
+    setWeekdays((current) =>
+      current.includes(day) ? current.filter((d) => d !== day) : [...current, day].sort((a, b) => a - b),
     );
   }
-  if (run.status === "SUBMITTED") {
-    return <div style={{ display: "flex", gap: 8 }}><Button variant="secondary" onClick={onConfirm}>{t.supplierConfirmed}</Button><Button icon={<Truck size={16} />} onClick={onReceive}>{t.receive}</Button></div>;
-  }
-  if (run.status === "CONFIRMED" || run.status === "PARTIALLY_RECEIVED") {
-    return <Button icon={<Truck size={16} />} onClick={onReceive}>{t.receive}</Button>;
-  }
-  return null;
-}
 
-function SupplierMessageDialog({
-  text,
-  onClose,
-  onCopied,
-}: {
-  text: string;
-  onClose: () => void;
-  onCopied: () => void;
-}) {
-  const t = useTr(M);
-  const c = useCommon();
-  const [error, setError] = useState<string | null>(null);
+  function buildRecurrence(): Recurrence {
+    if (mode === "daily") return { type: "daily" };
+    if (mode === "interval") return { type: "interval", everyNDays: everyNDays || 1, anchorDate: TODAY };
+    return { type: "weekly", weekdays };
+  }
 
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      onCopied();
-    } catch {
-      setError(t.copyFailed);
+  function setHour(nextHour: number) {
+    setTime(timeOfDay(nextHour, minute));
+  }
+
+  function stepMinute(delta: number) {
+    const total = hour * 60 + minute + delta;
+    const normalized = ((total % 1440) + 1440) % 1440;
+    setTime(timeOfDay(Math.floor(normalized / 60), normalized % 60));
+  }
+
+  const confirmDisabled = !supplierId || !assignedUserId || lines.length === 0 || (mode === "weekly" && weekdays.length === 0);
+  const primaryDisabled =
+    step === "supplier" ? !supplierId : step === "items" ? lines.length === 0 : confirmDisabled;
+
+  function goBack() {
+    setStep((current) => {
+      const currentIndex = steps.indexOf(current);
+      return steps[Math.max(0, currentIndex - 1)];
+    });
+  }
+
+  function goNext() {
+    setStep((current) => {
+      const currentIndex = steps.indexOf(current);
+      return steps[Math.min(steps.length - 1, currentIndex + 1)];
+    });
+  }
+
+  function confirmPrimary() {
+    if (!isFinalStep) {
+      goNext();
+      return;
     }
-  };
+    void save();
+  }
 
-  return (
-    <Dialog
-      title={t.copyTitle}
-      description={t.copyDescription}
-      confirmLabel={t.copyAction}
-      cancelLabel={c.close}
-      width={620}
-      onCancel={onClose}
-      onConfirm={() => void copy()}
-    >
-      {error ? <ErrorBanner message={error} /> : null}
-      <textarea
-        aria-label={t.copyTitle}
-        readOnly
-        value={text}
-        rows={10}
-        style={{
-          width: "100%",
-          resize: "vertical",
-          border: "1px solid var(--border-default)",
-          borderRadius: "var(--radius-md)",
-          background: "var(--surface-sunken)",
-          color: "var(--text-strong)",
-          font: "500 14px/1.6 var(--font-sans)",
-          padding: 14,
-        }}
-      />
-    </Dialog>
-  );
-}
-
-function SkipOrderDialog({
-  run,
-  onClose,
-  onSkipped,
-}: {
-  run: OrderRun;
-  onClose: () => void;
-  onSkipped: () => Promise<void>;
-}) {
-  const t = useTr(M);
-  const c = useCommon();
-  const errText = useApiError();
-  const [reason, setReason] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const reasonId = useId();
-  const recurrenceType = run.orderRule.recurrence.type;
-  const description =
-    recurrenceType === "daily"
-      ? t.skipDailyDescription
-      : recurrenceType === "weekly"
-        ? t.skipWeeklyDescription
-        : t.skipOccurrenceDescription;
-
-  const skip = async () => {
+  async function save() {
+    if (confirmDisabled) return;
     setBusy(true);
     setError(null);
     try {
-      await api(`/order-runs/${run.id}/skip`, {
-        method: "POST",
-        body: JSON.stringify({ reason: reason.trim() || null }),
-      });
-      await onSkipped();
+      const payload = {
+        supplierId,
+        assignedUserId,
+        escalationUserId: rule?.escalationUserId ?? null,
+        reminderTimeOfDay: time,
+        recurrence: buildRecurrence(),
+        cutoffTime: rule?.cutoffTime ?? undefined,
+        expectedDeliveryOffsetDays: rule?.expectedDeliveryOffsetDays ?? undefined,
+        lines: lines.map((line, index) => ({
+          itemId: line.itemId,
+          defaultQuantity:
+            line.defaultQuantity === "" || Number(line.defaultQuantity) <= 0
+              ? undefined
+              : Number(line.defaultQuantity),
+          unit: line.unit.trim() || undefined,
+          notes: line.notes.trim() || undefined,
+          sortOrder: index,
+        })),
+      };
+      if (rule) {
+        await api(`/order-rules/${rule.id}`, { method: "PATCH", body: JSON.stringify(payload) });
+      } else {
+        await api("/order-rules", { method: "POST", body: JSON.stringify(payload) });
+      }
+      await onSaved();
     } catch (cause) {
+      // Without this the dialog swallowed the failure: it closed the busy state
+      // and left the plan unsaved with nothing on screen to say so.
+      console.error(cause);
       setError(errText(cause, t.saveFailed));
     } finally {
       setBusy(false);
     }
-  };
+  }
 
   return (
     <Dialog
-      title={t.skipTitle}
-      description={description}
-      confirmLabel={t.skipAction}
+      title={rule ? t.dialogEditTitle : t.dialogNewTitle}
+      confirmLabel={!isFinalStep ? t.next : rule ? t.saveChanges : t.createPlan}
       cancelLabel={c.cancel}
-      tone="danger"
+      secondaryLabel={stepIndex > 0 ? t.back : undefined}
+      width={760}
+      confirmDisabled={primaryDisabled}
       busy={busy}
       onCancel={onClose}
-      onConfirm={() => void skip()}
+      onSecondary={goBack}
+      onConfirm={confirmPrimary}
     >
-      {error ? <ErrorBanner message={error} /> : null}
-      <Field label={t.skipReason} htmlFor={reasonId}>
-        <Input id={reasonId} value={reason} onChange={(event) => setReason(event.target.value)} />
-      </Field>
-    </Dialog>
-  );
-}
+      <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+        <div role="alert" aria-atomic="true">
+          {error ? (
+            <div
+              style={{
+                padding: "11px 14px",
+                border: "1px solid var(--status-escalated-bd)",
+                borderRadius: "var(--radius-md)",
+                background: "var(--status-escalated-bg)",
+                color: "var(--status-escalated-fg)",
+                fontSize: 13,
+              }}
+            >
+              {error}
+            </div>
+          ) : null}
+        </div>
 
-function SupplierConfirmDialog({ run, onClose, onSaved }: { run: OrderRun; onClose: () => void; onSaved: () => Promise<void> }) {
-  const t = useTr(M);
-  const c = useCommon();
-  const errText = useApiError();
-  const [reference, setReference] = useState(run.supplierReference ?? "");
-  const [deliveryDate, setDeliveryDate] = useState(run.expectedDeliveryDate?.slice(0, 10) ?? "");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const uid = useId();
-  const referenceId = `${uid}-reference`;
-  const deliveryDateId = `${uid}-delivery-date`;
-  const save = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await api(`/order-runs/${run.id}/confirm`, {
-        method: "POST",
-        body: JSON.stringify({ supplierReference: reference || null, expectedDeliveryDate: deliveryDate || null }),
-      });
-      onClose();
-      await onSaved();
-    } catch (cause) {
-      setError(errText(cause, t.saveFailed));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Dialog title={t.confirmTitle} confirmLabel={t.confirmAction} cancelLabel={c.cancel} busy={busy} onCancel={onClose} onConfirm={() => void save()}>
-      {error ? <ErrorBanner message={error} /> : null}
-      <div style={{ display: "grid", gap: 14 }}>
-        {/* Field renders its <label> as a sibling, not a wrapper, so every input
-            needs an explicit id or it has no accessible name at all. */}
-        <Field label={t.reference} htmlFor={referenceId}><Input id={referenceId} value={reference} onChange={(event) => setReference(event.target.value)} /></Field>
-        <Field label={t.deliveryDate} htmlFor={deliveryDateId}><Input id={deliveryDateId} type="date" value={deliveryDate} onChange={(event) => setDeliveryDate(event.target.value)} /></Field>
-      </div>
-    </Dialog>
-  );
-}
+        <WizardProgress
+          activeIndex={stepIndex}
+          labels={[t.supplier, t.itemsStep, t.timeStep]}
+        />
 
-type ReceivingRow = { received: string; price: string; exception: "" | ReceivingException; note: string };
+        {step === "supplier" ? (
+          <section>
+            <StepIntro title={t.wizardSupplierTitle} description={t.wizardSupplierHint} />
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+              {suppliers.map((supplier) => (
+                <SupplierButton
+                  key={supplier.id}
+                  supplier={supplier}
+                  itemCount={items.filter((item) => item.supplierId === supplier.id).length}
+                  active={supplier.id === supplierId}
+                  lang={lang}
+                  onClick={() => updateSupplier(supplier.id)}
+                />
+              ))}
+            </div>
+          </section>
+        ) : null}
 
-function ReceiveDialog({ run, onClose, onSaved }: { run: OrderRun; onClose: () => void; onSaved: () => Promise<void> }) {
-  const t = useTr(M);
-  const c = useCommon();
-  const lang = useLang();
-  const errText = useApiError();
-  const uid = useId();
-  const orderedLines = run.lines.filter((line) => Number(line.quantitySnapshot ?? 0) > 0);
-  const [rows, setRows] = useState<Record<string, ReceivingRow>>(() => Object.fromEntries(orderedLines.map((line) => [line.id, {
-    received: line.receivedQuantity === null ? String(line.quantitySnapshot ?? "") : String(line.receivedQuantity),
-    price: line.unitPrice === null ? "" : String(line.unitPrice),
-    exception: line.exceptionType ?? "",
-    note: line.exceptionNote ?? "",
-  }])));
-  const [receivingNote, setReceivingNote] = useState(run.receivingNote ?? "");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+        {step === "items" ? (
+          <section>
+            <StepIntro
+              title={`${t.wizardItemsTitle} ${selectedSupplier?.name ?? t.supplier}`}
+              description={t.wizardItemsHint}
+            />
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10 }}>
+              {supplierItems.length ? (
+                supplierItems.map((item) => (
+                  <ItemToggle
+                    key={item.id}
+                    item={item}
+                    selectedLine={lineByItemId.get(item.id)}
+                    onToggle={() => toggleItem(item)}
+                  />
+                ))
+              ) : (
+                <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{t.noItemsForSupplier}</div>
+              )}
+            </div>
+            <div role="status" aria-live="polite" style={{ marginTop: 12, fontSize: 13, color: "var(--text-muted)" }}>
+              {lines.length} {t.selectedChecklist}
+            </div>
+          </section>
+        ) : null}
 
-  const update = (lineId: string, patch: Partial<ReceivingRow>) => setRows((current) => ({ ...current, [lineId]: { ...current[lineId], ...patch } }));
-  const save = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await api(`/order-runs/${run.id}/receive`, {
-        method: "POST",
-        body: JSON.stringify({
-          receivingNote: receivingNote || null,
-          lines: orderedLines.map((line) => ({
-            lineId: line.id,
-            receivedQuantity: rows[line.id].received === "" ? null : Number(rows[line.id].received),
-            unitPrice: rows[line.id].price === "" ? null : Number(rows[line.id].price),
-            exceptionType: rows[line.id].exception || null,
-            exceptionNote: rows[line.id].note || null,
-          })),
-        }),
-      });
-      onClose();
-      await onSaved();
-    } catch (cause) {
-      setError(errText(cause, t.saveFailed));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Dialog title={t.receiveTitle(run.supplier.name)} confirmLabel={t.saveReceiving} cancelLabel={c.cancel} width={820} busy={busy} onCancel={onClose} onConfirm={() => void save()}>
-      {error ? <ErrorBanner message={error} /> : null}
-      <div style={{ display: "grid", gap: 10 }}>
-        {orderedLines.map((line) => {
-          // Field renders its <label> beside the control rather than around it,
-          // so without a per-line id the same three labels repeat for every item
-          // and none of them names an input.
-          const receivedId = `${uid}-received-${line.id}`;
-          const priceId = `${uid}-price-${line.id}`;
-          const issueId = `${uid}-issue-${line.id}`;
-          const noteId = `${uid}-note-${line.id}`;
-          return (
-            <div key={line.id} style={{ border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-lg)", padding: 14 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
-                <strong>{line.itemNameSnapshot}</strong>
-                <span style={{ color: "var(--text-muted)", fontSize: 12 }}>{t.ordered}: {String(line.quantitySnapshot)} {line.unitSnapshot}</span>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(145px, 1fr))", gap: 10 }}>
-                <Field label={t.received} htmlFor={receivedId}><Input id={receivedId} type="number" min={0} step="any" value={rows[line.id].received} onChange={(event) => update(line.id, { received: event.target.value })} /></Field>
-                <Field label={t.unitPrice(currencySymbol(lang))} htmlFor={priceId}><Input id={priceId} type="number" min={0} step="0.01" value={rows[line.id].price} onChange={(event) => update(line.id, { price: event.target.value })} /></Field>
-                <Field label={t.issue} htmlFor={issueId}>
-                  <Select id={issueId} value={rows[line.id].exception} onChange={(event) => update(line.id, { exception: event.target.value as ReceivingRow["exception"] })}>
-                    <option value="">{t.noIssue}</option>
-                    <option value="SHORT">{t.exception.SHORT}</option>
-                    <option value="MISSING">{t.exception.MISSING}</option>
-                    <option value="DAMAGED">{t.exception.DAMAGED}</option>
-                    <option value="SUBSTITUTED">{t.exception.SUBSTITUTED}</option>
+        {step === "time" ? (
+          <section>
+            <StepIntro title={t.wizardTimeTitle} description={t.wizardTimeHint} />
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 24, alignItems: "start" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+                {/* Field renders its <label> as a sibling, not a wrapper, so the
+                    select needs an explicit id or it has no accessible name. */}
+                <Field label={t.responsible} htmlFor={assigneeId}>
+                  <Select id={assigneeId} value={assignedUserId} onChange={(e) => setAssignedUserId(e.target.value)}>
+                    <option value="" disabled>{t.selectPerson}</option>
+                    {team.map((member) => (
+                      <option key={member.id} value={member.id}>{member.name}</option>
+                    ))}
                   </Select>
                 </Field>
-                <Field label={t.issueNote} htmlFor={noteId}><Input id={noteId} value={rows[line.id].note} disabled={!rows[line.id].exception} onChange={(event) => update(line.id, { note: event.target.value })} /></Field>
+
+                <div>
+                  <Eyebrow>{t.recurrence}</Eyebrow>
+                  <SegmentedModePicker
+                    mode={mode}
+                    groupLabel={t.recurrence}
+                    labels={{ daily: t.modeDaily, weekly: t.modeWeekly, interval: t.modeInterval }}
+                    onChange={setMode}
+                  />
+
+                  {mode === "weekly" ? (
+                    <div role="group" aria-label={t.recurrence} style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
+                      {WEEKDAY_LABELS[lang].map((label, index) => {
+                        const day = index + 1;
+                        const on = weekdays.includes(day);
+                        return (
+                          <button
+                            key={day}
+                            type="button"
+                            onClick={() => toggleDay(day)}
+                            aria-pressed={on}
+                            aria-label={WEEKDAY_FULL[lang][index]}
+                            style={{
+                              appearance: "none",
+                              WebkitAppearance: "none",
+                              minWidth: 46,
+                              height: 38,
+                              padding: "0 12px",
+                              borderRadius: "var(--radius-md)",
+                              border: `1px solid ${on ? "var(--brand-500)" : "var(--border-default)"}`,
+                              background: on ? "var(--brand-50)" : "var(--surface-card)",
+                              color: on ? "var(--brand-700)" : "var(--text-muted)",
+                              fontFamily: "var(--font-sans)",
+                              fontSize: 13,
+                              fontWeight: 600,
+                              cursor: "pointer",
+                              transition: "all var(--dur-fast) var(--ease-out)",
+                            }}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+
+                  {mode === "interval" ? (
+                    <IntervalStepper
+                      everyNDays={everyNDays}
+                      every={t.every}
+                      days={t.days}
+                      onChange={(next) => setEveryNDays(Math.min(60, Math.max(1, next)))}
+                    />
+                  ) : null}
+
+                  {mode === "daily" ? (
+                    <div style={{ marginTop: 14, fontSize: 13, color: "var(--text-muted)" }}>{t.dailyCaption}</div>
+                  ) : null}
+                </div>
+
+                <div>
+                  <Eyebrow>{t.reminderTime}</Eyebrow>
+                  <TimeStepper
+                    hour={hour}
+                    minute={minute}
+                    labels={{
+                      increaseHour: t.increaseHour,
+                      decreaseHour: t.decreaseHour,
+                      increaseMinute: t.increaseMinute,
+                      decreaseMinute: t.decreaseMinute,
+                    }}
+                    onHourChange={setHour}
+                    onMinuteStep={stepMinute}
+                  />
+                  <div style={{ marginTop: 12 }}>
+                    <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>{t.quickTimes}</div>
+                    <div role="group" aria-label={t.quickTimes} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {quickTimes.map((quickTime) => (
+                        <button
+                          key={quickTime}
+                          type="button"
+                          onClick={() => setTime(quickTime)}
+                          aria-pressed={time === quickTime}
+                          style={{
+                            appearance: "none",
+                            WebkitAppearance: "none",
+                            borderRadius: "var(--radius-pill)",
+                            border: `1px solid ${time === quickTime ? "var(--brand-200)" : "var(--border-default)"}`,
+                            background: time === quickTime ? "var(--brand-50)" : "var(--surface-card)",
+                            color: time === quickTime ? "var(--brand-700)" : "var(--text-muted)",
+                            padding: "7px 12px",
+                            fontFamily: "var(--font-mono)",
+                            fontSize: 12.5,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {quickTime}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  role="status"
+                  aria-live="polite"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "9px 12px",
+                    background: "var(--brand-50)",
+                    border: "1px solid var(--brand-100)",
+                    borderRadius: "var(--radius-md)",
+                    color: "var(--brand-700)",
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 12.5,
+                  }}
+                >
+                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--brand-500)", flex: "none" }} />
+                  {recurrenceSentence(mode, weekdays, everyNDays, time, lang)}
+                </div>
               </div>
+
+              <ReminderPreview
+                supplierName={selectedSupplier?.name ?? t.supplier}
+                time={time}
+                lines={previewLines}
+                labels={{ empty: t.previewEmpty, done: t.done, usual: t.usual }}
+                lang={lang}
+              />
             </div>
-          );
-        })}
-        <Field label={t.receivingNote} htmlFor={`${uid}-receiving-note`}><Input id={`${uid}-receiving-note`} value={receivingNote} onChange={(event) => setReceivingNote(event.target.value)} /></Field>
+          </section>
+        ) : null}
       </div>
     </Dialog>
   );
 }
 
-function Summary({ label, value, tone }: { label: string; value: number; tone: "pending" | "accent" | "confirmed" }) {
-  // The semantic accent tokens, not the raw brand steps this used to reach for.
-  const colors = tone === "accent"
-    ? { bg: "var(--accent-soft)", border: "var(--accent-soft-border)", dot: "var(--accent)" }
-    : { bg: `var(--status-${tone}-bg)`, border: `var(--status-${tone}-bd)`, dot: `var(--status-${tone}-dot)` };
+function Eyebrow({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 16px", border: `1px solid ${colors.border}`, borderRadius: "var(--radius-xl)", background: "var(--surface-card)" }}>
-      <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: colors.bg, border: `1px solid ${colors.border}`, display: "grid", placeItems: "center" }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: colors.dot }} /></span>
-      <div><strong style={{ display: "block", fontSize: 20 }}>{value}</strong><span style={{ color: "var(--text-muted)", fontSize: 12 }}>{label}</span></div>
+    <div
+      style={{
+        marginBottom: 10,
+        fontSize: 11,
+        fontWeight: 700,
+        letterSpacing: "0.08em",
+        textTransform: "uppercase",
+        color: "var(--text-muted)",
+      }}
+    >
+      {children}
     </div>
   );
 }
 
-function PriceChange({ value }: { value: number }) {
-  const t = useTr(M);
-  const lang = useLang();
-  const increased = value > 0;
-  // The API sends one decimal (12.5), which must not reach a Bulgarian reader
-  // with an English decimal point. Sign is carried by the wording, not the digits.
-  const percent = Math.abs(value).toLocaleString(lang === "bg" ? "bg-BG" : "en-GB", { maximumFractionDigits: 1 });
+function StepIntro({ title, description }: { title: string; description: string }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 4, fontSize: 11.5, color: increased ? "var(--status-escalated-fg)" : "var(--status-confirmed-fg)" }}>
-      {increased ? <AlertTriangle size={13} /> : <Check size={13} />}
-      {increased ? t.priceUp(percent) : t.priceDown(percent)}
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ fontFamily: "var(--font-display)", fontSize: 22, fontWeight: 700, color: "var(--text-strong)" }}>
+        {title}
+      </div>
+      <div style={{ marginTop: 5, fontSize: 14, color: "var(--text-muted)", lineHeight: 1.45 }}>
+        {description}
+      </div>
     </div>
   );
 }
 
-function ErrorBanner({ message }: { message: string }) {
-  return <div role="alert" style={{ marginBottom: 14, padding: "11px 14px", border: "1px solid var(--status-escalated-bd)", borderRadius: "var(--radius-md)", color: "var(--status-escalated-fg)", background: "var(--status-escalated-bg)", fontSize: 13 }}>{message}</div>;
+function WizardProgress({ activeIndex, labels }: { activeIndex: number; labels: string[] }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: `repeat(${labels.length}, minmax(0, 1fr))`, gap: 8 }}>
+      {labels.map((label, index) => {
+        const active = index === activeIndex;
+        const complete = index < activeIndex;
+        return (
+          <div
+            key={label}
+            aria-current={active ? "step" : undefined}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              minWidth: 0,
+              padding: "9px 10px",
+              borderRadius: "var(--radius-md)",
+              border: `1px solid ${active || complete ? "var(--brand-200)" : "var(--border-subtle)"}`,
+              background: active ? "var(--brand-50)" : complete ? "color-mix(in srgb, var(--brand-50) 42%, var(--surface-card))" : "var(--surface-sunken)",
+              color: active || complete ? "var(--brand-700)" : "var(--text-muted)",
+            }}
+          >
+            <span
+              style={{
+                width: 22,
+                height: 22,
+                borderRadius: "var(--radius-pill)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flex: "none",
+                background: active || complete ? "var(--brand-500)" : "var(--surface-card)",
+                color: active || complete ? "#fff" : "var(--text-muted)",
+                border: `1px solid ${active || complete ? "var(--brand-500)" : "var(--border-default)"}`,
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            >
+              {complete ? <Check size={13} strokeWidth={3} aria-hidden="true" /> : index + 1}
+            </span>
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 13, fontWeight: 700 }}>
+              {label}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
-const thStyle = { textAlign: "left" as const, padding: "10px 20px", fontWeight: 600 };
-const tdStyle = { padding: "13px 20px", fontSize: 13.5, verticalAlign: "middle" as const };
+function SupplierButton({
+  supplier,
+  itemCount,
+  active,
+  lang,
+  onClick,
+}: {
+  supplier: Supplier;
+  itemCount: number;
+  active: boolean;
+  lang: Lang;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      style={{
+        appearance: "none",
+        WebkitAppearance: "none",
+        minWidth: 132,
+        padding: "12px 16px",
+        borderRadius: "var(--radius-lg)",
+        border: `1px solid ${active ? "var(--brand-500)" : "var(--border-default)"}`,
+        background: active ? "var(--brand-50)" : "var(--surface-card)",
+        color: active ? "var(--brand-800)" : "var(--text-strong)",
+        boxShadow: active ? "inset 0 0 0 1px var(--brand-500)" : "var(--shadow-xs)",
+        textAlign: "left",
+        cursor: "pointer",
+        transition: "all var(--dur-fast) var(--ease-out)",
+      }}
+    >
+      <span style={{ display: "block", fontSize: 15, fontWeight: 700 }}>{supplier.name}</span>
+      <span style={{ display: "block", marginTop: 3, fontSize: 12, opacity: 0.65 }}>{itemCountLabel(itemCount, lang)}</span>
+    </button>
+  );
+}
+
+function ItemToggle({
+  item,
+  selectedLine,
+  onToggle,
+}: {
+  item: Item;
+  selectedLine?: DraftLine;
+  onToggle: () => void;
+}) {
+  const selected = Boolean(selectedLine);
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={selected}
+      style={{
+        appearance: "none",
+        WebkitAppearance: "none",
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        width: "100%",
+        minHeight: 58,
+        padding: "12px 14px",
+        borderRadius: "var(--radius-md)",
+        border: `1px solid ${selected ? "var(--brand-300)" : "var(--border-default)"}`,
+        background: selected ? "var(--brand-50)" : "var(--surface-card)",
+        boxShadow: "var(--shadow-xs)",
+        color: selected ? "var(--brand-800)" : "var(--text-body)",
+        textAlign: "left",
+        cursor: "pointer",
+        transition: "all var(--dur-fast) var(--ease-out)",
+      }}
+    >
+      <span
+        style={{
+          width: 22,
+          height: 22,
+          borderRadius: 6,
+          border: `1px solid ${selected ? "var(--brand-500)" : "var(--border-default)"}`,
+          background: selected ? "var(--brand-500)" : "var(--surface-card)",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flex: "none",
+        }}
+      >
+        <Check size={13} strokeWidth={3.5} color="#fff" aria-hidden="true" style={{ opacity: selected ? 1 : 0, transition: "opacity var(--dur-fast) var(--ease-out)" }} />
+      </span>
+      <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+        <span style={{ fontSize: 14, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</span>
+        {item.notes ? <span style={{ fontSize: 12, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.notes}</span> : null}
+      </span>
+      {item.unit ? (
+        <span style={{ marginLeft: "auto", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-muted)", flex: "none" }}>{item.unit}</span>
+      ) : null}
+    </button>
+  );
+}
+
+function ReminderPreview({
+  supplierName,
+  time,
+  lines,
+  labels,
+  lang,
+}: {
+  supplierName: string;
+  time: string;
+  lines: { id: string; name: string; quantity: string; unit: string }[];
+  labels: { empty: string; done: string; usual: string };
+  lang: Lang;
+}) {
+  return (
+    <div style={{ flex: "none", width: 340, maxWidth: "100%", fontFamily: "var(--font-sans)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, paddingLeft: 4 }}>
+        <span
+          style={{
+            width: 26,
+            height: 26,
+            borderRadius: "var(--radius-pill)",
+            flex: "none",
+            background: "var(--brand-500)",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Check size={14} strokeWidth={3} color="#fff" aria-hidden="true" />
+        </span>
+        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-strong)" }}>Poruchka bot</span>
+        {/* --text-faint clears only the 3:1 non-text floor: anything a person has
+            to read uses --text-muted (app/ds/colors.css). */}
+        <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{time}</span>
+      </div>
+
+      <div
+        style={{
+          background: "var(--surface-card)",
+          border: "1px solid var(--border-subtle)",
+          borderRadius: "4px 16px 16px 16px",
+          boxShadow: "var(--shadow-md)",
+          padding: 16,
+        }}
+      >
+        <div style={{ fontSize: 16, lineHeight: 1.35, color: "var(--text-strong)" }}>
+          <span aria-hidden>🛒</span>{" "}
+          {lang === "bg" ? (
+            <>
+              Проверете поръчката към <strong style={{ fontWeight: 700 }}>{supplierName}</strong> днес.
+            </>
+          ) : (
+            <>
+              Check the order from <strong style={{ fontWeight: 700 }}>{supplierName}</strong> today.
+            </>
+          )}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14 }}>
+          {lines.length ? (
+            lines.map((line) => {
+              const quantity = line.quantity && Number(line.quantity) > 0 ? `${line.quantity}${line.unit ? ` ${line.unit}` : ""}` : "";
+              return (
+                <div key={line.id} style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                  <span style={{ width: 16, height: 16, borderRadius: 4, border: "1.5px solid var(--border-default)", flex: "none" }} />
+                  <span style={{ fontSize: 14, color: "var(--text-body)" }}>{line.name}</span>
+                  {quantity ? (
+                    <span style={{ marginLeft: "auto", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-muted)" }}>
+                      {labels.usual}: {quantity}
+                    </span>
+                  ) : null}
+                </div>
+              );
+            })
+          ) : (
+            <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{labels.empty}</div>
+          )}
+        </div>
+
+        <div
+          style={{
+            marginTop: 16,
+            height: 40,
+            borderRadius: "var(--radius-md)",
+            background: "var(--accent)",
+            color: "#fff",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 7,
+            fontSize: 14,
+            fontWeight: 700,
+          }}
+        >
+          <Check size={16} strokeWidth={2.5} aria-hidden="true" />
+          {labels.done}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SegmentedModePicker({
+  mode,
+  groupLabel,
+  labels,
+  onChange,
+}: {
+  mode: Mode;
+  groupLabel: string;
+  labels: { daily: string; weekly: string; interval: string };
+  onChange: (mode: Mode) => void;
+}) {
+  const options: [Mode, string][] = [
+    ["daily", labels.daily],
+    ["weekly", labels.weekly],
+    ["interval", labels.interval],
+  ];
+  return (
+    <div
+      role="group"
+      aria-label={groupLabel}
+      style={{
+        display: "flex",
+        gap: 5,
+        background: "var(--surface-sunken)",
+        padding: 4,
+        borderRadius: "var(--radius-md)",
+        border: "1px solid var(--border-subtle)",
+      }}
+    >
+      {options.map(([key, label]) => {
+        const active = mode === key;
+        return (
+          <button
+            key={key}
+            type="button"
+            onClick={() => onChange(key)}
+            aria-pressed={active}
+            style={{
+              appearance: "none",
+              WebkitAppearance: "none",
+              flex: 1,
+              padding: "9px 0",
+              border: "none",
+              borderRadius: "var(--radius-sm)",
+              background: active ? "var(--surface-card)" : "transparent",
+              color: active ? "var(--brand-700)" : "var(--text-muted)",
+              boxShadow: active ? "var(--shadow-xs)" : "none",
+              fontFamily: "var(--font-sans)",
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function IntervalStepper({
+  everyNDays,
+  every,
+  days,
+  onChange,
+}: {
+  everyNDays: number;
+  every: string;
+  days: string;
+  onChange: (next: number) => void;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14 }}>
+      <span style={{ fontSize: 14, color: "var(--text-body)" }}>{every}</span>
+      <div style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--border-default)", borderRadius: "var(--radius-md)", overflow: "hidden", background: "var(--surface-card)" }}>
+        <button type="button" aria-label={`${every} −1`} onClick={() => onChange(everyNDays - 1)} style={smallStepperButtonStyle}>-</button>
+        <span style={{ width: 46, textAlign: "center", fontFamily: "var(--font-mono)", fontSize: 17, fontWeight: 700, color: "var(--text-strong)" }}>{everyNDays}</span>
+        <button type="button" aria-label={`${every} +1`} onClick={() => onChange(everyNDays + 1)} style={smallStepperButtonStyle}>+</button>
+      </div>
+      <span style={{ fontSize: 14, color: "var(--text-body)" }}>{days}</span>
+    </div>
+  );
+}
+
+const smallStepperButtonStyle: React.CSSProperties = {
+  appearance: "none",
+  WebkitAppearance: "none",
+  width: 34,
+  height: 34,
+  border: "none",
+  background: "transparent",
+  color: "var(--text-muted)",
+  fontFamily: "var(--font-sans)",
+  fontSize: 18,
+  fontWeight: 700,
+  cursor: "pointer",
+};
+
+function TimeStepper({
+  hour,
+  minute,
+  labels,
+  onHourChange,
+  onMinuteStep,
+}: {
+  hour: number;
+  minute: number;
+  labels: { increaseHour: string; decreaseHour: string; increaseMinute: string; decreaseMinute: string };
+  onHourChange: (hour: number) => void;
+  onMinuteStep: (delta: number) => void;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+      <TimeColumn
+        value={pad2(hour)}
+        onUp={() => onHourChange(hour + 1)}
+        onDown={() => onHourChange(hour - 1)}
+        upLabel={labels.increaseHour}
+        downLabel={labels.decreaseHour}
+      />
+      <span aria-hidden="true" style={{ fontFamily: "var(--font-mono)", fontSize: 38, fontWeight: 700, color: "var(--text-muted)", paddingTop: 28 }}>:</span>
+      <TimeColumn
+        value={pad2(minute)}
+        onUp={() => onMinuteStep(5)}
+        onDown={() => onMinuteStep(-5)}
+        upLabel={labels.increaseMinute}
+        downLabel={labels.decreaseMinute}
+      />
+    </div>
+  );
+}
+
+function TimeColumn({
+  value,
+  onUp,
+  onDown,
+  upLabel,
+  downLabel,
+}: {
+  value: string;
+  onUp: () => void;
+  onDown: () => void;
+  upLabel: string;
+  downLabel: string;
+}) {
+  return (
+    <div style={{ width: 74, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+      <button type="button" aria-label={upLabel} onClick={onUp} style={timeStepperButtonStyle}>
+        <ChevronUp size={17} aria-hidden="true" />
+      </button>
+      <div style={{ width: 70, textAlign: "center", fontFamily: "var(--font-mono)", fontSize: 44, fontWeight: 700, color: "var(--text-strong)", lineHeight: 1 }}>
+        {value}
+      </div>
+      <button type="button" aria-label={downLabel} onClick={onDown} style={timeStepperButtonStyle}>
+        <ChevronDown size={17} aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
+const timeStepperButtonStyle: React.CSSProperties = {
+  appearance: "none",
+  WebkitAppearance: "none",
+  width: 52,
+  height: 32,
+  border: "1px solid var(--border-default)",
+  borderRadius: "var(--radius-sm)",
+  background: "var(--surface-card)",
+  color: "var(--text-muted)",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  cursor: "pointer",
+};

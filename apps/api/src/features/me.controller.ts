@@ -1,9 +1,5 @@
-import { BadRequestException, Body, Controller, Get, Patch, UseGuards } from "@nestjs/common";
-import { DateTime } from "luxon";
-import {
-  updateTenantSettingsSchema,
-  type UpdateTenantSettingsInput,
-} from "@poruchka/shared";
+import { Body, Controller, Get, Patch, UseGuards } from "@nestjs/common";
+import { updateMeSchema, type UpdateMeInput } from "@poruchka/shared";
 import { SupabaseAuthGuard } from "../auth/supabase-auth.guard";
 import { CurrentUser, TenantId } from "../auth/request-context";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
@@ -23,23 +19,16 @@ export class MeController {
     };
   }
 
-  @Patch("settings")
-  async updateSettings(
-    @TenantId() tenantId: string,
-    @Body(new ZodValidationPipe(updateTenantSettingsSchema)) dto: UpdateTenantSettingsInput,
+  /** Self-service: update the caller's own display name (used in bot messages). */
+  @Patch()
+  async update(
+    @CurrentUser() user: { id: string },
+    @Body(new ZodValidationPipe(updateMeSchema)) dto: UpdateMeInput,
   ) {
-    if (!DateTime.local().setZone(dto.timezone).isValid) {
-      throw new BadRequestException("Unknown timezone");
-    }
-    // Equal start/end would silently disable quiet hours entirely (the scheduler
-    // treats start === end as "no quiet window"), causing 3am nudges. Reject it so
-    // the setting can't quietly turn itself off.
-    if (dto.quietHoursStart === dto.quietHoursEnd) {
-      throw new BadRequestException("Quiet hours start and end cannot be the same");
-    }
-    return this.prisma.tenant.update({
-      where: { id: tenantId },
-      data: dto,
+    const updated = await this.prisma.user.update({
+      where: { id: user.id },
+      data: { name: dto.name },
     });
+    return { id: updated.id, name: updated.name, role: updated.role };
   }
 }

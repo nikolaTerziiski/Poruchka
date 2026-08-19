@@ -1,6 +1,6 @@
 "use client";
 
-import { supabase } from "./supabaseClient";
+import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
 const RAW_API_URL = process.env.NEXT_PUBLIC_API_URL;
 // Keep zero-config local dev working, but make a production build that forgot
@@ -73,6 +73,11 @@ export async function api<T = unknown>(
   options: RequestInit = {},
 ): Promise<T> {
   if (!isApiConfigured) throw new Error("NEXT_PUBLIC_API_URL is not set");
+  // supabaseClient hands back an inert placeholder rather than null when the
+  // env vars are missing, so this has to be an explicit check: without it every
+  // call would sail past auth and come back 401, bouncing the user to /login in
+  // a loop instead of letting the shell show the "not configured" banner.
+  if (!isSupabaseConfigured) throw new Error("Supabase is not configured — see apps/web/.env.local");
 
   const {
     data: { session },

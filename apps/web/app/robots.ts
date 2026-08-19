@@ -8,7 +8,11 @@ const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://poruchka.bg").repl
  * here is to keep the authenticated shells out of the index. Each path below is
  * a directory that exists under app/(app)/ — a robots prefix match also covers
  * everything nested under it. /forgot-password is excluded too: there is no
- * reason to index a password-reset form. */
+ * reason to index a password-reset form.
+ *
+ * The retired paths /suppliers, /items and /schedules are deliberately absent:
+ * they are no longer pages, only redirect sources declared in next.config.mjs,
+ * and each lands on a destination that is already disallowed here. */
 export default function robots(): MetadataRoute.Robots {
   return {
     rules: {
@@ -17,9 +21,7 @@ export default function robots(): MetadataRoute.Robots {
       disallow: [
         "/dashboard",
         "/orders",
-        "/suppliers",
-        "/items",
-        "/schedules",
+        "/catalog",
         "/team",
         "/settings",
         "/forgot-password",

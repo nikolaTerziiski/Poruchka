@@ -7,7 +7,7 @@
     "experimentalDecorators": true,
     "target": "ES2021",
     "outDir": "./dist",
-    "baseUrl": "./",
+    "rootDir": "./src",
     "sourceMap": true,
     "strictPropertyInitialization": false
   },

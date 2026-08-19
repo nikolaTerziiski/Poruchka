@@ -4,12 +4,14 @@ import { Bot } from "grammy";
 import { createUserSchema } from "@poruchka/shared";
 import { SupabaseAuthGuard } from "../auth/supabase-auth.guard";
 import { CurrentUser, TenantId } from "../auth/request-context";
+import { Roles } from "../auth/roles.decorator";
+import { RolesGuard } from "../auth/roles.guard";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { PrismaService } from "../prisma/prisma.service";
 
 const MEMBER_SELECT = { id: true, name: true, role: true, chatChannel: true, chatUserId: true } as const;
 
-@UseGuards(SupabaseAuthGuard)
+@UseGuards(SupabaseAuthGuard, RolesGuard)
 @Controller("team")
 export class TeamController {
   constructor(
@@ -22,6 +24,7 @@ export class TeamController {
     return this.prisma.user.findMany({ where: { tenantId }, orderBy: { createdAt: "asc" }, select: MEMBER_SELECT });
   }
 
+  @Roles("OWNER")
   @Post()
   create(
     @TenantId() tenantId: string,
@@ -34,6 +37,7 @@ export class TeamController {
   }
 
   /** Issue a one-time Telegram deep link the member opens to connect their chat. */
+  @Roles("OWNER")
   @Post(":id/telegram-link")
   async telegramLink(@TenantId() tenantId: string, @Param("id") id: string) {
     await this.ensureOwned(tenantId, id);
@@ -48,6 +52,7 @@ export class TeamController {
     return { code, deepLink: username ? `https://t.me/${username}?start=${code}` : null };
   }
 
+  @Roles("OWNER")
   @Post(":id/unlink")
   async unlink(@TenantId() tenantId: string, @Param("id") id: string) {
     await this.ensureOwned(tenantId, id);
@@ -55,6 +60,7 @@ export class TeamController {
     return { ok: true };
   }
 
+  @Roles("OWNER")
   @Delete(":id")
   async remove(@TenantId() tenantId: string, @Param("id") id: string, @CurrentUser() current: { id: string }) {
     await this.ensureOwned(tenantId, id);

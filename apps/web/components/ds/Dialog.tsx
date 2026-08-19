@@ -12,10 +12,14 @@ export interface DialogProps {
   children?: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
+  /** Optional third button between Cancel and Confirm — used by the multi-step
+   *  order wizard for "Back". Omit the label and the button is not rendered. */
+  secondaryLabel?: string;
   /** Label on the confirm button while `busy`. Defaults to Запазване… / Изтриване… by tone. */
   busyLabel?: string;
   tone?: "default" | "danger";
   confirmDisabled?: boolean;
+  secondaryDisabled?: boolean;
   busy?: boolean;
   /**
    * Allow a click on the dimmed backdrop to close the dialog. Off by default:
@@ -25,6 +29,7 @@ export interface DialogProps {
   dismissOnBackdrop?: boolean;
   onConfirm?: () => void;
   onCancel?: () => void;
+  onSecondary?: () => void;
   width?: number;
 }
 
@@ -46,13 +51,16 @@ function DialogPanel({
   children,
   confirmLabel,
   cancelLabel,
+  secondaryLabel,
   busyLabel,
   tone = "default",
   confirmDisabled = false,
+  secondaryDisabled = false,
   busy = false,
   dismissOnBackdrop = false,
   onConfirm,
   onCancel,
+  onSecondary,
   width = 460,
 }: Omit<DialogProps, "open">) {
   const c = useCommon();
@@ -179,6 +187,11 @@ function DialogPanel({
         {children ? <div style={{ marginTop: 18 }}>{children}</div> : null}
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 24 }}>
           <Button variant="ghost" onClick={onCancel} disabled={busy}>{cancelText}</Button>
+          {secondaryLabel ? (
+            <Button variant="ghost" onClick={onSecondary} disabled={secondaryDisabled || busy}>
+              {secondaryLabel}
+            </Button>
+          ) : null}
           <Button variant={tone === "danger" ? "danger" : "primary"} onClick={onConfirm} disabled={confirmDisabled || busy}>
             {confirmText}
           </Button>

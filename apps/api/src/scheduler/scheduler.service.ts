@@ -1,212 +1,206 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { DateTime } from "luxon";
+import type { Recurrence } from "@poruchka/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { NOTIFICATION_CHANNEL, NotificationChannel } from "../channels/notification-channel.port";
-import {
-  confirmButtonLabel,
-  escalationMessage,
-  orderReminderMessage,
-  quantitiesButtonLabel,
-  skipButtonLabel,
-  snoozeButtonLabel,
-  supplierTextButtonLabel,
-} from "../channels/bot-copy";
-import { OrderRunsService } from "../features/order-runs.service";
+import { doneButtonLabel, orderReminderMessage, postponeButtonLabel } from "../channels/bot-copy";
+import { recurrenceMatchesDate } from "../reminders/recurrence";
 
-/** Materializes recurring supplier orders, sends nudges, and escalates misses. */
+/**
+ * The order engine. Each tick:
+ *  1. materialize — create today's PENDING OrderRuns (with snapshotted lines)
+ *     for active OrderRules whose recurrence matches today (idempotent via the
+ *     orderRuleId+dueDate unique constraint).
+ *  2. dispatch — send/re-nudge due PENDING orders to the responsible person's
+ *     chat as a single per-supplier order sheet, honoring quiet hours and the
+ *     nudge cap (then escalate).
+ * Done/Postpone taps are handled in TelegramBotService + TelegramOrderActionService.
+ */
 @Injectable()
 export class SchedulerService {
   private readonly logger = new Logger(SchedulerService.name);
   private running = false;
 
+  /**
+   * Dev-only accelerated cadence for testing the reminder loop end to end:
+   * newly materialized runs send immediately, re-nudges fire every minute,
+   * and quiet hours are ignored. Enable with REMINDER_TEST_FAST=1 in the
+   * API env; it refuses to activate when NODE_ENV=production.
+   */
+  private readonly testFast =
+    process.env.REMINDER_TEST_FAST === "1" && process.env.NODE_ENV !== "production";
+
   constructor(
     private readonly prisma: PrismaService,
-    private readonly orderRuns: OrderRunsService,
     @Inject(NOTIFICATION_CHANNEL) private readonly channel: NotificationChannel,
-  ) {}
+  ) {
+    if (this.testFast) {
+      this.logger.warn(
+        "REMINDER_TEST_FAST is ON — sending immediately, nudging every minute, ignoring quiet hours. Dev/testing only.",
+      );
+    }
+  }
 
   @Cron(CronExpression.EVERY_MINUTE)
   async tick(): Promise<void> {
-    if (this.running) return;
+    if (this.running) return; // never overlap two ticks
     this.running = true;
     try {
-      await this.orderRuns.materializeToday();
+      await this.materialize();
       await this.dispatch();
-    } catch (error) {
-      this.logger.error(`tick failed: ${error instanceof Error ? error.message : String(error)}`);
+    } catch (e) {
+      this.logger.error(`tick failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       this.running = false;
+    }
+  }
+
+  /** A @db.Date value pinned to the calendar date (no timezone drift). */
+  private utcDateOf(dt: DateTime): Date {
+    return new Date(Date.UTC(dt.year, dt.month - 1, dt.day));
+  }
+
+  private async materialize(): Promise<void> {
+    const tenants = await this.prisma.tenant.findMany({
+      include: {
+        orderRules: {
+          where: { active: true, archivedAt: null },
+          include: { lines: { include: { item: true }, orderBy: { sortOrder: "asc" } } },
+        },
+      },
+    });
+    for (const tenant of tenants) {
+      const today = DateTime.now().setZone(tenant.timezone).startOf("day");
+      for (const rule of tenant.orderRules) {
+        if (rule.lines.length === 0) continue; // nothing to order
+        const rec = rule.recurrence as unknown as Recurrence;
+        if (!recurrenceMatchesDate(rec, today)) continue;
+
+        const dueDate = this.utcDateOf(today);
+        const exists = await this.prisma.orderRun.findUnique({
+          where: { orderRuleId_dueDate: { orderRuleId: rule.id, dueDate } },
+          select: { id: true },
+        });
+        if (exists) continue;
+
+        const [hh, mm] = rule.reminderTimeOfDay.split(":").map((n) => parseInt(n, 10));
+        const dueAt = today.set({ hour: hh, minute: mm, second: 0, millisecond: 0 });
+        const expectedDeliveryDate =
+          rule.expectedDeliveryOffsetDays != null
+            ? this.utcDateOf(today.plus({ days: rule.expectedDeliveryOffsetDays }))
+            : null;
+
+        await this.prisma.orderRun.create({
+          data: {
+            tenantId: tenant.id,
+            orderRuleId: rule.id,
+            supplierId: rule.supplierId,
+            assignedUserId: rule.assignedUserId,
+            dueDate,
+            dueAt: dueAt.toJSDate(),
+            expectedDeliveryDate,
+            status: "PENDING",
+            nextNudgeAt: this.testFast ? DateTime.now().toJSDate() : dueAt.toJSDate(),
+            lines: {
+              create: rule.lines.map((l, i) => ({
+                itemId: l.itemId,
+                itemNameSnapshot: l.item.name,
+                quantitySnapshot: l.defaultQuantity ?? null,
+                unitSnapshot: l.unit ?? l.item.unit ?? null,
+                notesSnapshot: l.notes ?? l.item.notes ?? null,
+                sortOrder: l.sortOrder ?? i,
+              })),
+            },
+          },
+        });
+      }
     }
   }
 
   private async dispatch(): Promise<void> {
     const now = new Date();
     const due = await this.prisma.orderRun.findMany({
-      // ESCALATED runs are re-included so escalation keeps surfacing until the order
-      // is actually handled, instead of firing once and going silent forever.
-      where: { status: { in: ["PENDING", "ESCALATED"] }, nextNudgeAt: { lte: now } },
+      where: { status: "PENDING", nextNudgeAt: { lte: now } },
       include: {
         tenant: true,
         supplier: true,
         assignedUser: true,
         lines: { orderBy: { sortOrder: "asc" } },
-        orderRule: { include: { escalationUser: true } },
+        orderRule: { select: { cutoffTime: true } },
       },
     });
 
     for (const run of due) {
-      const nowLocal = DateTime.now().setZone(run.tenant.timezone);
+      const t = run.tenant;
+      const nowLocal = DateTime.now().setZone(t.timezone);
+      const renudgeMin = this.testFast ? 1 : t.renudgeIntervalMin;
 
-      if (this.inQuietHours(nowLocal.hour, run.tenant.quietHoursStart, run.tenant.quietHoursEnd)) {
-        // Guard the defer on the current status + due time so we don't clobber a
-        // user action (Sent/Snooze/Skip) that raced this tick.
-        await this.prisma.orderRun.updateMany({
-          where: { id: run.id, status: run.status, nextNudgeAt: { lte: now } },
-          data: { nextNudgeAt: this.nextAllowed(nowLocal, run.tenant.quietHoursEnd).toJSDate() },
+      // Quiet hours → defer to the next allowed time, don't send.
+      if (!this.testFast && this.inQuietHours(nowLocal.hour, t.quietHoursStart, t.quietHoursEnd)) {
+        await this.prisma.orderRun.update({
+          where: { id: run.id },
+          data: { nextNudgeAt: this.nextAllowed(nowLocal, t.quietHoursEnd).toJSDate() },
         });
         continue;
       }
 
-      const wasEscalated = run.status === "ESCALATED";
-      const sentCount = run.sentCount + 1;
-      // An unlinked assignee still counts toward escalation — otherwise a never-linked
-      // staff member means the order re-nudges forever and no one is ever alerted.
-      const escalated = wasEscalated || sentCount >= run.tenant.maxNudges;
-      const nextNudgeAt = nowLocal.plus({ minutes: run.tenant.renudgeIntervalMin }).toJSDate();
+      const user = run.assignedUser;
+      if (!user.chatUserId) {
+        this.logger.warn(`OrderRun ${run.id}: assignee has no linked chat — deferring`);
+        await this.prisma.orderRun.update({
+          where: { id: run.id },
+          data: { nextNudgeAt: nowLocal.plus({ minutes: renudgeMin }).toJSDate() },
+        });
+        continue;
+      }
 
-      // ATOMIC CLAIM: advance the row BEFORE sending, conditional on it still being
-      // in the same state and still due. If the user tapped Sent/Snooze in the
-      // meantime, status/nextNudgeAt no longer match and the claim affects 0 rows —
-      // so we never resurrect a completed order or discard a snooze (the old
-      // read-send-then-unconditional-write pattern did exactly that).
-      const claim = await this.prisma.orderRun.updateMany({
-        where: { id: run.id, status: run.status, nextNudgeAt: { lte: now } },
+      const text = orderReminderMessage(t.language, {
+        supplier: run.supplier.name,
+        cutoffTime: run.orderRule.cutoffTime,
+        lines: run.lines.map((l) => ({
+          name: l.itemNameSnapshot,
+          quantity: l.quantitySnapshot,
+          unit: l.unitSnapshot,
+          note: l.notesSnapshot,
+        })),
+      });
+      try {
+        await this.channel.send({
+          chatUserId: user.chatUserId,
+          text,
+          buttons: [
+            { label: doneButtonLabel(t.language), payload: `order:done:${run.id}` },
+            { label: postponeButtonLabel(t.language), payload: `order:snooze:${run.id}` },
+          ],
+        });
+      } catch (e) {
+        this.logger.error(
+          `send failed for order ${run.id}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        continue;
+      }
+
+      const sentCount = run.sentCount + 1;
+      const escalate = sentCount >= t.maxNudges;
+      await this.prisma.orderRun.update({
+        where: { id: run.id },
         data: {
           sentCount,
           lastSentAt: now,
-          postponedUntil: null,
-          status: escalated ? "ESCALATED" : "PENDING",
-          nextNudgeAt,
+          status: escalate ? "ESCALATED" : "PENDING",
+          nextNudgeAt: escalate ? null : nowLocal.plus({ minutes: renudgeMin }).toJSDate(),
         },
       });
-      if (claim.count === 0) continue;
-
-      // Deliver the assignee reminder while the order is still theirs to place.
-      if (!wasEscalated && run.assignedUser.chatUserId) {
-        try {
-          await this.channel.send({
-            chatUserId: run.assignedUser.chatUserId,
-            text: orderReminderMessage(run.tenant.language, {
-              supplier: run.supplier.name,
-              cutoffTime: run.orderRule.cutoffTime,
-              lines: run.lines.map((line) => ({
-                item: line.itemNameSnapshot,
-                quantity: line.quantitySnapshot?.toString() ?? null,
-                unit: line.unitSnapshot,
-                note: line.notesSnapshot,
-              })),
-            }),
-            buttons: this.orderButtons(
-              run.id,
-              run.tenant.language,
-              this.recurrenceType(run.orderRule.recurrence),
-            ),
-          });
-        } catch (error) {
-          // Row is already advanced, so a failed send retries at the next interval
-          // rather than immediately — no duplicate blast.
-          this.logger.error(`send failed for order ${run.id}: ${error instanceof Error ? error.message : String(error)}`);
-        }
-      } else if (!wasEscalated && !run.assignedUser.chatUserId) {
-        this.logger.warn(`Order ${run.id}: assignee has no linked chat — escalation will cover it`);
-      }
-
-      if (escalated) await this.notifyEscalation(run);
       this.logger.log(
-        `Order ${run.id} (${run.supplier.name}) for ${run.assignedUser.name}${
-          escalated ? " — escalated" : ` (nudge ${sentCount}/${run.tenant.maxNudges})`
-        }`,
+        `OrderRun ${run.id} (${run.supplier.name}, ${run.lines.length} items) sent to ${user.name}${escalate ? " — escalated" : ` (nudge ${sentCount}/${t.maxNudges})`}`,
       );
-    }
-  }
-
-  private async notifyEscalation(run: {
-    id: string;
-    tenantId: string;
-    dueAt: Date;
-    tenant: { language: string; timezone: string };
-    supplier: { name: string };
-    assignedUser: { name: string };
-    orderRule: { escalationUser: { chatUserId: string | null } | null };
-  }) {
-    const fallbackOwner = run.orderRule.escalationUser
-      ? null
-      : await this.prisma.user.findFirst({
-          where: { tenantId: run.tenantId, role: "OWNER", chatUserId: { not: null } },
-        });
-    const chatUserId = run.orderRule.escalationUser?.chatUserId ?? fallbackOwner?.chatUserId;
-    if (!chatUserId) {
-      this.logger.warn(`Order ${run.id}: escalated but no escalation recipient is linked`);
-      return;
-    }
-    try {
-      await this.channel.send({
-        chatUserId,
-        text: escalationMessage(run.tenant.language, {
-          supplier: run.supplier.name,
-          assignee: run.assignedUser.name,
-          dueTime: DateTime.fromJSDate(run.dueAt).setZone(run.tenant.timezone).toFormat("HH:mm"),
-        }),
-        buttons: this.orderButtons(
-          run.id,
-          run.tenant.language,
-          this.recurrenceType(
-            (run.orderRule as { recurrence?: unknown }).recurrence,
-          ),
-        ),
-      });
-    } catch (error) {
-      this.logger.error(`escalation send failed for order ${run.id}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   private inQuietHours(hour: number, start: number, end: number): boolean {
     if (start === end) return false;
     return start < end ? hour >= start && hour < end : hour >= start || hour < end;
-  }
-
-  private orderButtons(orderRunId: string, lang: string, recurrenceType?: string) {
-    return [
-      {
-        label: supplierTextButtonLabel(lang),
-        payload: `order:copy:${orderRunId}`,
-      },
-      {
-        // Lets the assignee set amounts from the chat — without this the reminder
-        // dead-ends whenever the plan has no default quantities.
-        label: quantitiesButtonLabel(lang),
-        payload: `order:qty:${orderRunId}`,
-      },
-      {
-        label: confirmButtonLabel(lang),
-        payload: `order:submit:${orderRunId}`,
-      },
-      {
-        label: snoozeButtonLabel(lang),
-        payload: `order:snooze:${orderRunId}:60`,
-      },
-      {
-        label: skipButtonLabel(lang, recurrenceType),
-        payload: `order:skip:${orderRunId}`,
-      },
-    ];
-  }
-
-  private recurrenceType(recurrence: unknown): string | undefined {
-    if (!recurrence || typeof recurrence !== "object" || !("type" in recurrence)) return undefined;
-    const value = (recurrence as { type?: unknown }).type;
-    return typeof value === "string" ? value : undefined;
   }
 
   private nextAllowed(now: DateTime, quietEnd: number): DateTime {

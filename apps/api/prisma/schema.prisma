@@ -2,12 +2,11 @@
 //
 // TENANT ISOLATION: currently enforced ENTIRELY in the application layer — every
 // query filters by tenantId (via the TenantId decorator + ensureOwned/getOwned).
-// Postgres RLS is NOT yet in force: some order tables have ROW LEVEL SECURITY
-// enabled but there are no CREATE POLICY statements, and the app connects as the
-// table owner (which bypasses RLS). Do not rely on the database as a tenant
-// backstop until real policies + a per-request tenant GUC are added. See
-// docs/AUDIT-2026-07-31.md §3 for the plan to make RLS real before onboarding a
-// second tenant.
+// Postgres RLS is NOT yet in force: no migration issues a CREATE POLICY, and the
+// app connects as the table owner (which bypasses RLS even where it is enabled).
+// Do not rely on the database as a tenant backstop until real policies + a
+// per-request tenant GUC are added. See docs/AUDIT-2026-07-31.md §3 for the plan
+// to make RLS real before onboarding a second tenant.
 
 generator client {
   provider = "prisma-client-js"
@@ -36,9 +35,6 @@ enum OrderRunStatus {
   SUBMITTED
   ESCALATED
   SKIPPED
-  CONFIRMED
-  PARTIALLY_RECEIVED
-  RECEIVED
 }
 
 /// A restaurant. Top-level tenant; everything else is scoped to it.
@@ -77,12 +73,14 @@ model User {
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
 
-  assignedOrderRules   OrderRule[] @relation("OrderRuleAssignee")
-  escalationOrderRules OrderRule[] @relation("OrderRuleEscalation")
-  assignedOrderRuns    OrderRun[]  @relation("OrderRunAssignee")
-  submittedOrderRuns   OrderRun[]  @relation("OrderRunSubmitter")
+  orderRulesAssigned   OrderRule[] @relation("OrderRuleAssignee")
+  orderRulesEscalation OrderRule[] @relation("OrderRuleEscalation")
+  orderRunsAssigned    OrderRun[]  @relation("OrderRunAssignee")
+  orderRunsSubmitted   OrderRun[]  @relation("OrderRunSubmittedBy")
 
   @@index([tenantId])
+  // One chat identity maps to at most one member per tenant. NULL chatUserId
+  // rows stay distinct in Postgres, so unlinked members are unaffected.
   @@unique([tenantId, chatChannel, chatUserId])
   @@map("users")
 }
@@ -124,64 +122,67 @@ model Item {
   @@map("items")
 }
 
-/// A recurring supplier order plan. Lines are grouped because restaurants place
-/// one order with a supplier, not one independent order per item.
+/// A recurring order to one supplier: the whole basket is reminded as a single
+/// message. Lines hold the items + default quantities.
 model OrderRule {
-  id                         String    @id @default(uuid()) @db.Uuid
-  tenantId                   String    @db.Uuid
-  supplierId                 String    @db.Uuid
-  assignedUserId             String    @db.Uuid
-  escalationUserId           String?   @db.Uuid
-  reminderTimeOfDay          String
-  recurrence                 Json
-  cutoffTime                 String?
-  expectedDeliveryOffsetDays Int?
-  active                     Boolean   @default(true)
-  createdAt                  DateTime  @default(now())
-  updatedAt                  DateTime  @updatedAt
+  id                         String   @id @default(uuid()) @db.Uuid
+  tenantId                   String   @db.Uuid
+  tenant                     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  supplierId                 String   @db.Uuid
+  supplier                   Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  assignedUserId             String   @db.Uuid
+  assignedUser               User     @relation("OrderRuleAssignee", fields: [assignedUserId], references: [id], onDelete: Restrict)
+  escalationUserId           String?  @db.Uuid
+  escalationUser             User?    @relation("OrderRuleEscalation", fields: [escalationUserId], references: [id], onDelete: SetNull)
+  reminderTimeOfDay          String // "HH:mm" in the tenant's timezone
+  recurrence                 Json // discriminated union, validated by zod in the app layer
+  cutoffTime                 String? // local "HH:mm" deadline to place the order
+  expectedDeliveryOffsetDays Int? // delivery lands this many days after the order
+  active                     Boolean  @default(true)
   archivedAt                 DateTime?
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
 
-  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  supplier       Supplier        @relation(fields: [supplierId], references: [id], onDelete: Restrict)
-  assignedUser   User            @relation("OrderRuleAssignee", fields: [assignedUserId], references: [id], onDelete: Restrict)
-  escalationUser User?           @relation("OrderRuleEscalation", fields: [escalationUserId], references: [id], onDelete: SetNull)
-  lines          OrderRuleLine[]
-  runs           OrderRun[]
+  lines OrderRuleLine[]
+  runs  OrderRun[]
 
   @@index([tenantId])
   @@index([tenantId, archivedAt])
   @@index([supplierId])
-  @@index([assignedUserId])
-  @@index([escalationUserId])
   @@map("order_rules")
 }
 
+/// One item on an order rule, with the quantity normally ordered.
 model OrderRuleLine {
-  id              String   @id @default(uuid()) @db.Uuid
-  orderRuleId     String   @db.Uuid
-  itemId          String   @db.Uuid
-  defaultQuantity Decimal? @db.Decimal(12, 3)
+  id              String    @id @default(uuid()) @db.Uuid
+  orderRuleId     String    @db.Uuid
+  orderRule       OrderRule @relation(fields: [orderRuleId], references: [id], onDelete: Cascade)
+  itemId          String    @db.Uuid
+  item            Item      @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  defaultQuantity Float?
   unit            String?
   notes           String?
-  sortOrder       Int      @default(0)
+  sortOrder       Int       @default(0)
 
-  orderRule OrderRule @relation(fields: [orderRuleId], references: [id], onDelete: Cascade)
-  item      Item      @relation(fields: [itemId], references: [id], onDelete: Restrict)
-
-  @@unique([orderRuleId, itemId])
   @@index([orderRuleId])
-  @@index([itemId])
   @@map("order_rule_lines")
 }
 
-/// One due supplier order. Item data is snapshotted so historical orders stay
-/// truthful when catalog items or recurring plans change later.
+/// A concrete order occurrence for one day. The scheduler drives this; the
+/// calendar reads it. Lines are snapshotted so history stays stable.
 model OrderRun {
   id                   String         @id @default(uuid()) @db.Uuid
   tenantId             String         @db.Uuid
+  tenant               Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   orderRuleId          String         @db.Uuid
+  // Restrict (not Cascade): an OrderRun is the system-of-record for a placed
+  // order and must outlive the plan it came from. Plans are retired by setting
+  // archivedAt, never by a delete that would erase order history.
+  orderRule            OrderRule      @relation(fields: [orderRuleId], references: [id], onDelete: Restrict)
   supplierId           String         @db.Uuid
+  supplier             Supplier       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   assignedUserId       String         @db.Uuid
+  assignedUser         User           @relation("OrderRunAssignee", fields: [assignedUserId], references: [id], onDelete: Restrict)
   dueDate              DateTime       @db.Date
   dueAt                DateTime
   expectedDeliveryDate DateTime?      @db.Date
@@ -194,53 +195,33 @@ model OrderRun {
   postponedUntil       DateTime?
   submittedAt          DateTime?
   submittedByUserId    String?        @db.Uuid
+  submittedByUser      User?          @relation("OrderRunSubmittedBy", fields: [submittedByUserId], references: [id], onDelete: SetNull)
   skipReason           String?
-  supplierConfirmedAt  DateTime?
-  supplierReference    String?
-  receivedAt           DateTime?
-  receivingNote        String?
   createdAt            DateTime       @default(now())
   updatedAt            DateTime       @updatedAt
 
-  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  // Restrict (not Cascade): an OrderRun is the system-of-record for a placed order
-  // (prices, receipts, supplier refs). Deleting a plan must never erase order history.
-  orderRule       OrderRule      @relation(fields: [orderRuleId], references: [id], onDelete: Restrict)
-  supplier        Supplier       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
-  assignedUser    User           @relation("OrderRunAssignee", fields: [assignedUserId], references: [id], onDelete: Restrict)
-  submittedByUser User?          @relation("OrderRunSubmitter", fields: [submittedByUserId], references: [id], onDelete: SetNull)
-  lines           OrderRunLine[]
+  lines OrderRunLine[]
 
-  @@unique([orderRuleId, dueDate])
+  @@unique([orderRuleId, dueDate]) // makes materialization idempotent
   @@index([tenantId])
-  @@index([tenantId, dueDate])
   @@index([status, nextNudgeAt])
-  @@index([supplierId])
-  @@index([assignedUserId])
-  @@index([submittedByUserId])
   @@map("order_runs")
 }
 
+/// A snapshotted line of a concrete order run.
 model OrderRunLine {
   id               String   @id @default(uuid()) @db.Uuid
   orderRunId       String   @db.Uuid
+  orderRun         OrderRun @relation(fields: [orderRunId], references: [id], onDelete: Cascade)
   itemId           String   @db.Uuid
+  item             Item     @relation(fields: [itemId], references: [id], onDelete: Restrict)
   itemNameSnapshot String
-  quantitySnapshot Decimal? @db.Decimal(12, 3)
+  quantitySnapshot Float?
   unitSnapshot     String?
   notesSnapshot    String?
-  receivedQuantity Decimal? @db.Decimal(12, 3)
-  unitPrice        Decimal? @db.Decimal(12, 2)
-  exceptionType    String?
-  exceptionNote    String?
   sortOrder        Int      @default(0)
 
-  orderRun OrderRun @relation(fields: [orderRunId], references: [id], onDelete: Cascade)
-  item     Item     @relation(fields: [itemId], references: [id], onDelete: Restrict)
-
-  @@unique([orderRunId, itemId])
   @@index([orderRunId])
-  @@index([itemId])
   @@map("order_run_lines")
 }
 

@@ -191,7 +191,13 @@ export default function LoginPage() {
           </Link>
         </div>
         {errKey && <Notice tone="error">{t.errors[errKey]}</Notice>}
-        <Button type="submit" variant="primary" size="lg" disabled={loading} style={{ width: "100%", marginTop: 2 }}>
+        <Button
+          type="submit"
+          variant="primary"
+          size="lg"
+          disabled={loading || !isSupabaseConfigured}
+          style={{ width: "100%", marginTop: 2 }}
+        >
           {loading ? t.signingIn : t.signIn}
         </Button>
       </form>

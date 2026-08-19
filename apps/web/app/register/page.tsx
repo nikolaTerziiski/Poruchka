@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Check } from "lucide-react";
-import { supabase } from "@/lib/supabaseClient";
+import { supabase, isSupabaseConfigured } from "@/lib/supabaseClient";
 import { useTr, useCommon } from "@/lib/i18n";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { Button } from "@/components/ds/Button";
@@ -17,6 +17,7 @@ const M = {
   en: {
     title: "Create your restaurant",
     subtitle: "Start sending ordering reminders in minutes",
+    notConfigured: "The app isn't fully set up yet. Please get in touch with us.",
     restaurantName: "Restaurant name",
     restaurantPlaceholder: "e.g. Mehana Izvorat",
     ownerName: "Your name",
@@ -46,6 +47,7 @@ const M = {
   bg: {
     title: "Създайте вашия ресторант",
     subtitle: "Само няколко минути и започвате да изпращате напомняния за поръчки",
+    notConfigured: "Приложението не е настроено докрай. Свържете се с нас.",
     restaurantName: "Име на ресторанта",
     restaurantPlaceholder: "напр. Механа „Изворът“",
     ownerName: "Вашето име",
@@ -194,6 +196,11 @@ export default function RegisterPage() {
         </>
       }
     >
+      {!isSupabaseConfigured && (
+        <div style={{ marginBottom: 16 }}>
+          <Notice tone="warning">{t.notConfigured}</Notice>
+        </div>
+      )}
       <form onSubmit={onSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <Field label={t.restaurantName} htmlFor="rname">
           <Input
@@ -283,7 +290,13 @@ export default function RegisterPage() {
         />
         {errKey && <Notice tone="error">{t.errors[errKey]}</Notice>}
         {notice && <Notice tone="success">{notice}</Notice>}
-        <Button type="submit" variant="primary" size="lg" disabled={!canSubmit || loading} style={{ width: "100%", marginTop: 2 }}>
+        <Button
+          type="submit"
+          variant="primary"
+          size="lg"
+          disabled={!canSubmit || loading || !isSupabaseConfigured}
+          style={{ width: "100%", marginTop: 2 }}
+        >
           {loading ? t.creating : t.createAccount}
         </Button>
       </form>

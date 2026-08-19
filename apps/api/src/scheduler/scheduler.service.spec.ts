@@ -1,160 +1,266 @@
+import { DateTime } from "luxon";
+import { NotificationChannel } from "../channels/notification-channel.port";
+import { PrismaService } from "../prisma/prisma.service";
 import { SchedulerService } from "./scheduler.service";
 
-/**
- * Covers the dispatch fixes from the 2026-07-31 audit:
- *  - the atomic claim (no double-send, no clobbering a user's Sent/Snooze)
- *  - an unlinked assignee still escalating instead of looping forever
- *  - escalation repeating instead of dead-ending after one message
- */
+const ids = {
+  tenant: "00000000-0000-0000-0000-000000000001",
+  rule: "00000000-0000-0000-0000-000000000002",
+  supplier: "00000000-0000-0000-0000-000000000003",
+  assignee: "00000000-0000-0000-0000-000000000004",
+  pork: "00000000-0000-0000-0000-000000000005",
+  tomatoes: "00000000-0000-0000-0000-000000000006",
+};
 
-type Run = Record<string, unknown>;
-
-function makeRun(overrides: Partial<Run> = {}): Run {
+function createPrismaMock() {
   return {
-    id: "run-1",
-    tenantId: "tenant-1",
-    status: "PENDING",
-    sentCount: 0,
-    dueAt: new Date("2026-07-15T09:00:00.000Z"),
     tenant: {
-      timezone: "Europe/Sofia",
-      language: "bg",
-      // Quiet hours 22:00-08:00; tests run at a local hour outside that window.
-      quietHoursStart: 22,
-      quietHoursEnd: 8,
-      renudgeIntervalMin: 60,
-      maxNudges: 3,
+      findMany: jest.fn(),
     },
-    supplier: { name: "Metro" },
-    assignedUser: { name: "Ivan", chatUserId: "555" },
-    lines: [{ itemNameSnapshot: "Pork", quantitySnapshot: null, unitSnapshot: "kg", notesSnapshot: null }],
-    orderRule: { cutoffTime: "11:00", recurrence: { type: "daily" }, escalationUserId: null, escalationUser: { chatUserId: "999" } },
-    ...overrides,
-  };
-}
-
-function harness(runs: Run[], claimCount = 1) {
-  const updateMany = jest.fn().mockResolvedValue({ count: claimCount });
-  const prisma = {
     orderRun: {
-      findMany: jest.fn().mockResolvedValue(runs),
-      updateMany,
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      findMany: jest.fn(),
+      update: jest.fn(),
     },
-    user: { findFirst: jest.fn().mockResolvedValue(null) },
   };
-  const channel = { channel: "telegram" as const, send: jest.fn().mockResolvedValue(undefined) };
-  const orderRuns = { materializeToday: jest.fn().mockResolvedValue(undefined) };
-  const service = new SchedulerService(prisma as never, orderRuns as never, channel as never);
-  return { service, prisma, channel, updateMany };
 }
 
-// dispatch() is private; the cron entrypoint drives it.
-const run = (s: SchedulerService) => (s as unknown as { dispatch(): Promise<void> }).dispatch();
+function createService(prisma: ReturnType<typeof createPrismaMock>) {
+  const channel: NotificationChannel = { channel: "telegram", send: jest.fn() };
+  return new SchedulerService(prisma as unknown as PrismaService, channel);
+}
 
-describe("SchedulerService.dispatch", () => {
-  it("claims the row before sending, and sends when the claim succeeds", async () => {
-    const { service, channel, updateMany } = harness([makeRun()]);
-    await run(service);
+function activeRule() {
+  return {
+    id: ids.rule,
+    supplierId: ids.supplier,
+    assignedUserId: ids.assignee,
+    reminderTimeOfDay: "09:30",
+    recurrence: { type: "daily" },
+    expectedDeliveryOffsetDays: 2,
+    lines: [
+      {
+        itemId: ids.pork,
+        defaultQuantity: 12,
+        unit: "kg",
+        notes: "trimmed",
+        sortOrder: 0,
+        item: { name: "Pork Meat", unit: "kg", notes: "lean" },
+      },
+      {
+        itemId: ids.tomatoes,
+        defaultQuantity: 6,
+        unit: null,
+        notes: null,
+        sortOrder: null,
+        item: { name: "Tomatoes", unit: "kg", notes: "ripe" },
+      },
+    ],
+  };
+}
 
-    expect(updateMany).toHaveBeenCalledTimes(1);
-    const claim = updateMany.mock.calls[0][0];
-    // The claim must be conditional on the state we read, so a concurrent user
-    // action loses the race instead of being overwritten.
-    expect(claim.where).toMatchObject({ id: "run-1", status: "PENDING" });
-    expect(claim.where.nextNudgeAt).toBeDefined();
-    expect(claim.data.sentCount).toBe(1);
-    expect(channel.send).toHaveBeenCalledTimes(1);
+describe("SchedulerService grouped order materialization", () => {
+  beforeEach(() => {
+    const fixedNow = DateTime.fromISO("2026-07-01T10:00:00.000", { zone: "Europe/Sofia" });
+    if (!fixedNow.isValid) throw new Error("Invalid fixed scheduler test date");
+    jest
+      .spyOn(DateTime, "now")
+      .mockReturnValue(fixedNow as DateTime<true>);
   });
 
-  it("ships a Quantities button so a reminder with no amounts is still actionable", async () => {
-    // The run below has quantitySnapshot: null — previously this reminder dead-ended
-    // because the only path to set amounts was the web admin.
-    const { service, channel } = harness([makeRun()]);
-    await run(service);
-
-    const payloads = channel.send.mock.calls[0][0].buttons.map((b: { payload: string }) => b.payload);
-    expect(payloads).toContain("order:qty:run-1");
-    expect(payloads).toContain("order:submit:run-1");
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
-  it("does NOT send when the claim matches no rows (user tapped Sent concurrently)", async () => {
-    const { service, channel } = harness([makeRun()], 0);
-    await run(service);
+  it("materializes only active non-archived order rules", async () => {
+    const prisma = createPrismaMock();
+    prisma.tenant.findMany.mockResolvedValue([
+      { id: ids.tenant, timezone: "Europe/Sofia", orderRules: [] },
+    ]);
+    prisma.orderRun.findMany.mockResolvedValue([]);
+    const service = createService(prisma);
 
-    // This is the "I already marked it Done and it kept nagging me" bug.
-    expect(channel.send).not.toHaveBeenCalled();
-  });
+    await service.tick();
 
-  it("counts an unlinked assignee toward escalation instead of deferring forever", async () => {
-    const unlinked = makeRun({ assignedUser: { name: "Ivan", chatUserId: null }, sentCount: 2 });
-    const { service, channel, updateMany } = harness([unlinked]);
-    await run(service);
-
-    const data = updateMany.mock.calls[0][0].data;
-    expect(data.sentCount).toBe(3); // advanced, not stuck at 2
-    expect(data.status).toBe("ESCALATED");
-    // No assignee message is possible, but the escalation contact is still told.
-    expect(channel.send).toHaveBeenCalledTimes(1);
-    expect(channel.send.mock.calls[0][0].chatUserId).toBe("999");
-  });
-
-  it("escalates once the nudge cap is reached and notifies the escalation contact", async () => {
-    const { service, channel, updateMany } = harness([makeRun({ sentCount: 2 })]);
-    await run(service);
-
-    expect(updateMany.mock.calls[0][0].data.status).toBe("ESCALATED");
-    // assignee reminder + escalation notice
-    expect(channel.send).toHaveBeenCalledTimes(2);
-    expect(channel.send.mock.calls[1][0].chatUserId).toBe("999");
-  });
-
-  it("keeps re-notifying an already-ESCALATED run instead of going silent", async () => {
-    const { service, channel, updateMany } = harness([makeRun({ status: "ESCALATED", sentCount: 9 })]);
-    await run(service);
-
-    const call = updateMany.mock.calls[0][0];
-    expect(call.where.status).toBe("ESCALATED");
-    expect(call.data.status).toBe("ESCALATED");
-    expect(call.data.nextNudgeAt).toBeInstanceOf(Date); // not null — it comes back
-    // Only the escalation contact is pinged; the assignee reminder is not resent.
-    expect(channel.send).toHaveBeenCalledTimes(1);
-    expect(channel.send.mock.calls[0][0].chatUserId).toBe("999");
-  });
-
-  it("defers without sending during quiet hours", async () => {
-    const quiet = makeRun({
-      tenant: {
-        timezone: "Europe/Sofia",
-        language: "bg",
-        quietHoursStart: 0,
-        quietHoursEnd: 23, // quiet nearly all day, so any test clock lands inside
-        renudgeIntervalMin: 60,
-        maxNudges: 3,
+    expect(prisma.tenant.findMany).toHaveBeenCalledWith({
+      include: {
+        orderRules: {
+          where: { active: true, archivedAt: null },
+          include: { lines: { include: { item: true }, orderBy: { sortOrder: "asc" } } },
+        },
       },
     });
-    const { service, channel, updateMany } = harness([quiet]);
-    await run(service);
-
-    expect(channel.send).not.toHaveBeenCalled();
-    const data = updateMany.mock.calls[0][0].data;
-    expect(data.nextNudgeAt).toBeInstanceOf(Date);
-    expect(data.sentCount).toBeUndefined(); // a defer must not consume a nudge
+    expect(prisma.orderRun.create).not.toHaveBeenCalled();
   });
 
-  it("selects both PENDING and ESCALATED runs that are due", async () => {
-    const { service, prisma } = harness([]);
-    await run(service);
+  it("does not duplicate order runs across repeated ticks", async () => {
+    const prisma = createPrismaMock();
+    prisma.tenant.findMany.mockResolvedValue([
+      { id: ids.tenant, timezone: "Europe/Sofia", orderRules: [activeRule()] },
+    ]);
+    prisma.orderRun.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: "run-existing" });
+    prisma.orderRun.create.mockResolvedValue({ id: "run-new" });
+    prisma.orderRun.findMany.mockResolvedValue([]);
+    const service = createService(prisma);
 
-    const where = prisma.orderRun.findMany.mock.calls[0][0].where;
-    expect(where.status).toEqual({ in: ["PENDING", "ESCALATED"] });
+    await service.tick();
+    await service.tick();
+
+    const dueDate = new Date("2026-07-01T00:00:00.000Z");
+    expect(prisma.orderRun.findUnique).toHaveBeenCalledTimes(2);
+    expect(prisma.orderRun.findUnique).toHaveBeenCalledWith({
+      where: { orderRuleId_dueDate: { orderRuleId: ids.rule, dueDate } },
+      select: { id: true },
+    });
+    expect(prisma.orderRun.create).toHaveBeenCalledTimes(1);
+    expect(prisma.orderRun.create).toHaveBeenCalledWith({
+      data: {
+        tenantId: ids.tenant,
+        orderRuleId: ids.rule,
+        supplierId: ids.supplier,
+        assignedUserId: ids.assignee,
+        dueDate,
+        dueAt: new Date("2026-07-01T06:30:00.000Z"),
+        expectedDeliveryDate: new Date("2026-07-03T00:00:00.000Z"),
+        status: "PENDING",
+        nextNudgeAt: new Date("2026-07-01T06:30:00.000Z"),
+        lines: {
+          create: [
+            {
+              itemId: ids.pork,
+              itemNameSnapshot: "Pork Meat",
+              quantitySnapshot: 12,
+              unitSnapshot: "kg",
+              notesSnapshot: "trimmed",
+              sortOrder: 0,
+            },
+            {
+              itemId: ids.tomatoes,
+              itemNameSnapshot: "Tomatoes",
+              quantitySnapshot: 6,
+              unitSnapshot: "kg",
+              notesSnapshot: "ripe",
+              sortOrder: 1,
+            },
+          ],
+        },
+      },
+    });
   });
 });
 
+describe("SchedulerService REMINDER_TEST_FAST mode", () => {
+  const fixedNow = DateTime.fromISO("2026-07-01T10:00:00.000", { zone: "Europe/Sofia" });
+
+  function pendingRun(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "run-1",
+      sentCount: 0,
+      tenant: {
+        id: ids.tenant,
+        timezone: "Europe/Sofia",
+        language: "bg",
+        // Quiet hours covering "now" (10:00): normally nothing would send.
+        quietHoursStart: 9,
+        quietHoursEnd: 12,
+        renudgeIntervalMin: 60,
+        maxNudges: 5,
+      },
+      supplier: { name: "Metro" },
+      assignedUser: { id: ids.assignee, name: "Georgi", chatUserId: "555001" },
+      orderRule: { cutoffTime: null },
+      lines: [
+        { itemNameSnapshot: "Pork Meat", quantitySnapshot: 12, unitSnapshot: "kg", notesSnapshot: null, sortOrder: 0 },
+      ],
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    jest.spyOn(DateTime, "now").mockReturnValue(fixedNow as DateTime<true>);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    delete process.env.REMINDER_TEST_FAST;
+  });
+
+  it("materializes runs that send immediately instead of waiting for the reminder time", async () => {
+    process.env.REMINDER_TEST_FAST = "1";
+    const prisma = createPrismaMock();
+    prisma.tenant.findMany.mockResolvedValue([
+      { id: ids.tenant, timezone: "Europe/Sofia", orderRules: [activeRule()] },
+    ]);
+    prisma.orderRun.findUnique.mockResolvedValue(null);
+    prisma.orderRun.create.mockResolvedValue({ id: "run-new" });
+    prisma.orderRun.findMany.mockResolvedValue([]);
+    const service = createService(prisma);
+
+    await service.tick();
+
+    const created = prisma.orderRun.create.mock.calls[0][0].data;
+    // Rule time is 09:30 (already passed here, but the point holds for any
+    // future time): fast mode arms the nudge for NOW, not the rule's dueAt.
+    expect(created.nextNudgeAt).toEqual(fixedNow.toJSDate());
+  });
+
+  it("sends during quiet hours and re-arms the nudge one minute out", async () => {
+    process.env.REMINDER_TEST_FAST = "1";
+    const prisma = createPrismaMock();
+    prisma.tenant.findMany.mockResolvedValue([]);
+    prisma.orderRun.findMany.mockResolvedValue([pendingRun()]);
+    prisma.orderRun.update.mockResolvedValue({});
+    const channel: NotificationChannel = { channel: "telegram", send: jest.fn() };
+    const service = new SchedulerService(prisma as unknown as PrismaService, channel);
+
+    await service.tick();
+
+    expect(channel.send).toHaveBeenCalledTimes(1);
+    expect(prisma.orderRun.update).toHaveBeenCalledWith({
+      where: { id: "run-1" },
+      data: expect.objectContaining({
+        sentCount: 1,
+        nextNudgeAt: fixedNow.plus({ minutes: 1 }).toJSDate(),
+      }),
+    });
+  });
+
+  it("never activates in production even when the flag is set", async () => {
+    process.env.REMINDER_TEST_FAST = "1";
+    const prevEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      const prisma = createPrismaMock();
+      prisma.tenant.findMany.mockResolvedValue([]);
+      prisma.orderRun.findMany.mockResolvedValue([pendingRun()]);
+      prisma.orderRun.update.mockResolvedValue({});
+      const channel: NotificationChannel = { channel: "telegram", send: jest.fn() };
+      const service = new SchedulerService(prisma as unknown as PrismaService, channel);
+
+      await service.tick();
+
+      // Quiet hours apply again: deferred, nothing sent.
+      expect(channel.send).not.toHaveBeenCalled();
+      expect(prisma.orderRun.update).toHaveBeenCalledWith({
+        where: { id: "run-1" },
+        data: { nextNudgeAt: fixedNow.set({ hour: 12, minute: 0, second: 0, millisecond: 0 }).toJSDate() },
+      });
+    } finally {
+      process.env.NODE_ENV = prevEnv;
+    }
+  });
+});
+
+// Carried over from the 2026-07-31 audit: the quiet-hours window is pure logic
+// and is easy to get wrong at the midnight wrap, so it gets its own unit tests.
 describe("SchedulerService.inQuietHours", () => {
   const quiet = (h: number, s: number, e: number) =>
-    (new SchedulerService(null as never, null as never, null as never) as unknown as {
-      inQuietHours(hour: number, start: number, end: number): boolean;
-    }).inQuietHours(h, s, e);
+    (
+      new SchedulerService(null as never, null as never) as unknown as {
+        inQuietHours(hour: number, start: number, end: number): boolean;
+      }
+    ).inQuietHours(h, s, e);
 
   it("handles a window that wraps midnight", () => {
     expect(quiet(23, 22, 8)).toBe(true);
