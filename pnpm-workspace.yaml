@@ -6,3 +6,8 @@ allowBuilds:
   '@prisma/engines': true
   prisma: true
   sharp: true
+  # Native resolver behind eslint-import-resolver-typescript (pulled in by
+  # eslint-config-next). Its install script fetches the prebuilt binary for the
+  # platform. Left unset, pnpm's dependency check fails every `pnpm --filter …`
+  # command with ERR_PNPM_IGNORED_BUILDS — which breaks dev, lint and typecheck.
+  unrs-resolver: true

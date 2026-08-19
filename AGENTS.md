@@ -102,7 +102,7 @@ packages/
 ### App (authenticated) — **left sidebar shell**
 | Route | Page | Key elements |
 |-------|------|--------------|
-| `/onboarding` | **Onboarding** (first run) | Name your restaurant, set timezone — only if no tenant yet. |
+| `/onboarding` | **Onboarding** (first run) — *planned, not built yet (the route 404s today)* | Name your restaurant, set timezone — only if no tenant yet. Do not link to it until the page exists. |
 | `/dashboard` | **Calendar** (home) | Month/week order calendar; each day shows due items, supplier, assignee, status (pending/confirmed/escalated). |
 | `/suppliers` | **Suppliers** | Table + create/edit/delete (e.g. Metro). |
 | `/items` | **Items / Menu** | Table + create/edit/delete; choose supplier + unit. |
@@ -169,7 +169,10 @@ add your first"), error, disabled, and confirmation dialogs for destructive acti
 - **Email confirmation:** if enabled in Supabase, after signup show "check your email"; user
   confirms, then logs in.
 - **First login → onboarding:** the API auto‑provisions a Tenant + OWNER User on first
-  authenticated call if none exists; `/onboarding` lets them name the restaurant + set timezone.
+  authenticated call if none exists, naming the restaurant from the `restaurant_name` and the
+  person from the `full_name` sent at registration. `/onboarding` (which would let them rename the
+  restaurant + set timezone) is **not built yet** — the route 404s, so nothing may redirect to it;
+  new accounts land on `/dashboard`.
 - **Forgot/Reset:** standard Supabase reset‑email flow.
 
 ---
@@ -186,8 +189,11 @@ pnpm --filter @poruchka/api db:seed  # idempotent pilot seed
 
 - **Web admin runs on port 3002** (port 3000 is used by another local app).
 - Secrets live in gitignored env files (`apps/api/.env`, `apps/web/.env.local`); **never** commit
-  real keys — `.env.example` holds placeholders only. The web app needs
-  `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (public), `NEXT_PUBLIC_API_URL`.
+  real keys — `.env.example` holds placeholders only (its `[api]` lines go in `apps/api/.env`, its
+  `[web]` lines in `apps/web/.env.local`). The web app needs `NEXT_PUBLIC_SUPABASE_URL`,
+  `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (public; older projects that still issue a legacy JWT anon
+  key use `NEXT_PUBLIC_SUPABASE_ANON_KEY` instead — the app reads either), and
+  `NEXT_PUBLIC_API_URL`.
 
 ---
 
