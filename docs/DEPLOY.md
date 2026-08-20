@@ -31,6 +31,19 @@ piece of work, not a config change.
 
 ---
 
+## 0b. Prerequisite — install the Vercel GitHub App
+
+Creating a git-linked Vercel project fails until this is done:
+
+> `To link a GitHub repository, you need to install the GitHub integration first.`
+
+Install it once at **https://github.com/apps/vercel** and grant it access to
+`nikolaTerziiski/Poruchka`. This cannot be automated — it is a GitHub-side
+authorization. After that the project can be created and every push to `main`
+deploys automatically.
+
+---
+
 ## 1. Vercel — project settings
 
 The repo is a pnpm + Turborepo monorepo, so the defaults will not work.
@@ -77,6 +90,8 @@ From `.env.example` plus a grep of `process.env` and `config.get` in `apps/api/s
 | `CORS_ORIGINS` | **see the warning below** |
 | `PORT` | usually set by the host |
 | `NODE_ENV` | `production` |
+| `ORDER_LINK_SECRET` | **required for one-tap confirm links.** Min 16 chars, no default — a predictable key lets anyone mint a link for any order. Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"` |
+| `PUBLIC_WEB_URL` | public URL of the web admin; used to build the `/o/<token>` links the reminders carry |
 | `ENABLE_DEV_ENDPOINTS` | leave unset. `true` exposes unauthenticated endpoints that can bind any user's Telegram to any chat |
 
 > ### ⚠ `CORS_ORIGINS` is fail-closed in production
