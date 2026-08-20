@@ -113,26 +113,27 @@ RLS — it was removed from `.env.example` in this pass.
 
 ## 4. Supabase
 
-### 4a. Apply the pending migration — do this first
+### 4a. Migration state — the pending one is APPLIED
 
-One migration is on disk and not in the database:
+`20260714090000_orderrun_orderrule_restrict` was **applied to the live database on 2026-08-19** and
+verified: `order_runs_orderRuleId_fkey` now reports `RESTRICT`. Deleting an order plan can no longer
+cascade-delete its order history. Nothing further is needed here.
 
-```bash
-cd apps/api && npx prisma migrate deploy
-```
+It was applied through the Supabase MCP `apply_migration` tool rather than `prisma migrate deploy`,
+so Prisma's own `_prisma_migrations` table does **not** record it. The SQL is idempotent
+(`DROP CONSTRAINT IF EXISTS` then `ADD`), so a later `prisma migrate deploy` re-running it is
+harmless — it will simply drop and re-add the same constraint and then record it.
 
-`20260714090000_orderrun_orderrule_restrict` changes `order_runs.orderRuleId` from
-`ON DELETE CASCADE` to `ON DELETE RESTRICT`. Verified against the live database on 2026-08-19: that
-FK is **still `c` (cascade)**, so **deleting an order plan today cascade-deletes its order
-history** — `submittedAt`, `unitPrice`, `receivedQuantity`, `supplierReference` all go with it.
+**Known drift.** `prisma migrate status` reports two migrations present in the database but not in
+the repo: `20260713113053_extend_order_run_receiving` and `20260713110000_reconcile_order_model`.
+Both were removed during the merge because upstream's chain already produces the merged schema. The
+columns they added (`receivedQuantity`, `unitPrice`, `exceptionType`, `supplierConfirmedAt`) still
+exist in the database and are all nullable, so nothing breaks — but `schema.prisma` no longer
+declares them, and it declares `Float` where the database has `numeric`. Reads were probed against
+real data (48 rule lines, 285 run lines) and Prisma coerces correctly.
 
-It is pure DDL. It reads, writes and deletes no rows, and is reversible by re-adding the constraint
-with `CASCADE`.
-
-**Known drift:** three migrations are recorded in `_prisma_migrations` but no longer exist in the
-repo (`telegram_identity_unique`, `replace_schedules_with_orders`, `archive_order_rules`) — they were
-folded into `reconcile_order_model`. `prisma migrate deploy` ignores database-only rows and will
-apply just the pending one. **`prisma migrate dev` would refuse** — do not run it against production.
+Use **`prisma migrate deploy`**, which tolerates database-only rows. **Never `prisma migrate dev`**
+against production — it would try to reset.
 
 ### 4b. Register the password-reset redirect
 
