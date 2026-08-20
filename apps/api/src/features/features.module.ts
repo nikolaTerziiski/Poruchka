@@ -9,6 +9,11 @@ import { OrderRulesController } from "./order-rules.controller";
 import { TeamController } from "./team.controller";
 import { OrdersController } from "./orders.controller";
 import { SettingsController } from "./settings.controller";
+import { OrderLinkService } from "./order-link.service";
+import {
+  PublicOrderLinkController,
+  OrderLinkAdminController,
+} from "./order-link.controller";
 
 @Module({
   imports: [ChannelsModule],
@@ -20,7 +25,9 @@ import { SettingsController } from "./settings.controller";
     TeamController,
     OrdersController,
     SettingsController,
+    PublicOrderLinkController,
+    OrderLinkAdminController,
   ],
-  providers: [SupabaseAuthGuard, RolesGuard],
+  providers: [SupabaseAuthGuard, RolesGuard, OrderLinkService],
 })
 export class FeaturesModule {}
